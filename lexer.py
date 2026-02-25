@@ -1,9 +1,7 @@
-# lexer.py
 import re
 
 class AnalizadorLexico:
     def __init__(self):
-        # Diccionario de lexemas (Tu código original)
         self.tokens_fijos = {
             '+': 'TKN OPADD', '-': 'TKN OPSUB', '*': 'TKN OPMULT', '/': 'TKN OPDIV',
             '(': 'TKN PAREN_A', ')': 'TKN PAREN_C', '[': 'TKN CORAPER', ']': 'TKN CORCIERRE',
@@ -11,14 +9,13 @@ class AnalizadorLexico:
             '=': 'TKN ASIGN', '"': 'TKN COMILLA',
             '×': 'TKN OPMULT' # Añadido de tu bloque main
         }
-        # Tipos de datos válidos (Extraído de tu Automata para el Lexer)
+        # Tipos de datos validos
         self.tipos_datos = {'int', 'double', 'str', 'bool'}
         
-        # Patrón regex para separar la expresion (Tu código original)
+        # Patrón regex para separar la expresion
         self.patron = r'[a-zA-Z]:|\d+\.\d+|[a-zA-Z_][\w.]*|\d+|[^\w\s]'
 
     def es_identificador_valido(self, token):
-        # Lógica de validación rápida de ID
         if not token: return False
         return token[0].isalpha() or token[0] == '_'
 

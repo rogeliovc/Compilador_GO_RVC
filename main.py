@@ -2,7 +2,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
 
-# Importamos las 3 fases de nuestro compilador (los archivos que creamos antes)
 from lexer import AnalizadorLexico
 from parser import AnalizadorSintactico
 from semantic import AutomataSemantico
@@ -10,11 +9,10 @@ from semantic import AutomataSemantico
 class CodeEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("Compilador Mini-Go") # Actualizado
+        self.root.title("Compilador Mini-Go")
         self.root.geometry("1000x700")
         self.current_file = None
-        
-        # INICIALIZAMOS LAS 3 FASES DEL COMPILADOR
+
         self.lexer = AnalizadorLexico()
         self.parser = AnalizadorSintactico()
         self.semantic = AutomataSemantico()
@@ -49,7 +47,7 @@ class CodeEditor:
         
         self.text_area.config(yscrollcommand=self.on_textscroll)
         
-        # Área de texto para resultados del análisis
+        # Área de texto para resultados
         self.results_text = tk.Text(self.results_frame, wrap=tk.WORD, font=('Consolas', 10),
                                    background='#2b2b2b', foreground='#00ff00',
                                    padx=5, pady=5, height=8)
@@ -78,10 +76,22 @@ class CodeEditor:
     def update_line_numbers(self):
         self.line_numbers.config(state='normal')
         self.line_numbers.delete(1.0, tk.END)
-        line_count = int(self.text_area.index('end-1c').split('.')[0])
+        
+        content = self.text_area.get(1.0, tk.END)
+        if content:
+            if content.endswith('\n'):
+                content = content[:-1]
+            line_count = content.count('\n') + 1
+        else:
+            line_count = 1
+        
+        # Generar números de línea
         line_numbers_text = '\n'.join(str(i) for i in range(1, line_count + 1))
         self.line_numbers.insert(1.0, line_numbers_text)
         self.line_numbers.config(state='disabled')
+        
+        # Sincronizar el scroll
+        self.line_numbers.yview_moveto(self.text_area.yview()[0])
     
     def on_textscroll(self, *args):
         self.scrollbar.set(*args)
@@ -92,12 +102,12 @@ class CodeEditor:
         self.line_numbers.yview_moveto(args[0])
     
     def on_key_release(self, event=None):
-        self.update_line_numbers()
+        if event and event.keysym in ['Return', 'BackSpace', 'Delete']:
+            self.update_line_numbers()
         self.update_status()
         self.validar_en_tiempo_real()
     
     def validar_en_tiempo_real(self):
-        # Actualizado para usar self.semantic
         linea_actual = self.text_area.get("insert linestart", "insert lineend").strip()
         if linea_actual:
             palabras = linea_actual.split()
@@ -156,6 +166,7 @@ class CodeEditor:
         menubar.add_cascade(label="Ejecutar", menu=run_menu)
         run_menu.add_command(label="Analizar Léxicamente", accelerator="F5", command=self.analizar_lexico)
         run_menu.add_command(label="Validar Estructura", accelerator="F6", command=self.validar_estructura)
+        run_menu.add_command(label="Generar Árbol de Parseo", accelerator="F7", command=self.generar_arbol_parseo)
         run_menu.add_command(label="Compilar", accelerator="F9", command=self.compilar_codigo)
         
         compiler_menu = tk.Menu(menubar, tearoff=0)
@@ -185,8 +196,7 @@ class CodeEditor:
         self.update_status()
     
     def open_file(self):
-        # Añadí soporte nativo para .go
-        file_types = [("Archivos Go", "*.go"), ("Archivos Python", "*.py"), ("Archivos de texto", "*.txt"), ("Todos los archivos", "*.*")]
+        file_types = [("Archivos Python", "*.py"),("Archivos Go", "*.go"), ("Archivos de texto", "*.txt"), ("Todos los archivos", "*.*")]
         
         file_path = filedialog.askopenfilename(filetypes=file_types)
         if file_path:
@@ -243,6 +253,7 @@ class CodeEditor:
         self.root.bind_all('<Control-s>', lambda e: self.save_file())
         self.root.bind_all('<F5>', lambda e: self.analizar_lexico())
         self.root.bind_all('<F6>', lambda e: self.validar_estructura())
+        self.root.bind_all('<F7>', lambda e: self.generar_arbol_parseo())
         self.root.bind_all('<F9>', lambda e: self.compilar_codigo())
     
     def show_about(self):
@@ -258,7 +269,6 @@ class CodeEditor:
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, "=== ANÁLISIS LÉXICO ===\n\n")
         
-        # Conectado a nuestro nuevo lexer.py
         tokens = self.lexer.procesar(codigo)
         for tipo, valor in tokens:
             self.results_text.insert(tk.END, f"<{tipo}, '{valor}'>\n")
@@ -275,7 +285,6 @@ class CodeEditor:
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, "=== VALIDACIÓN ESTRUCTURAL ===\n\n")
         
-        # Conectado a nuestro nuevo parser.py
         if self.parser.validar_apertura_cierres(codigo):
             self.results_text.insert(tk.END, "✓ Estructura válida: Paréntesis, corchetes y llaves balanceados correctamente.\n")
             self.status_label.config(text="Estructura válida")
@@ -283,10 +292,30 @@ class CodeEditor:
             self.results_text.insert(tk.END, "✗ Error estructural: Símbolos sin abrir/cerrar o cruzados.\n")
             self.status_label.config(text="Error estructural")
     
+    def generar_arbol_parseo(self):
+        codigo = self.text_area.get(1.0, tk.END).strip()
+        if not codigo:
+            self.results_text.delete(1.0, tk.END)
+            self.results_text.insert(tk.END, "No hay código para analizar.\n")
+            return
+        
+        self.results_text.delete(1.0, tk.END)
+        self.results_text.insert(tk.END, "=== ÁRBOL DE PARSEO ===\n\n")
+        
+        tokens = self.lexer.procesar(codigo)
+        
+        arbol = self.parser.generar_arbol_parseo(tokens)
+        
+        self.results_text.insert(tk.END, f"Expresión: {codigo}\n\n")
+        self.results_text.insert(tk.END, arbol)
+        
+        self.status_label.config(text="Árbol de parseo generado")
+    
     def compilar_codigo(self):
         self.analizar_lexico()
         self.results_text.insert(tk.END, "\n")
         self.validar_estructura()
+        self.generar_arbol_parseo()
         self.results_text.insert(tk.END, "\n=== COMPILACIÓN COMPLETADA ===\n")
         self.status_label.config(text="Compilación finalizada")
     
@@ -295,7 +324,6 @@ class CodeEditor:
         self.status_label.config(text="Resultados limpiados")
     
     def ver_variables(self):
-        # Conectado a nuestro nuevo semantic.py
         variables = self.semantic.variables_encontradas
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, "=== VARIABLES REGISTRADAS (Tabla de Símbolos) ===\n\n")
@@ -310,7 +338,6 @@ class CodeEditor:
         self.status_label.config(text=f"{len(variables)} variables")
     
     def limpiar_variables(self):
-        # Conectado a nuestro nuevo semantic.py
         self.semantic.variables_encontradas.clear()
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, "Variables limpiadas.\n")
