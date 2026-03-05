@@ -3,17 +3,24 @@ import re
 class AnalizadorLexico:
     def __init__(self):
         self.tokens_fijos = {
-            '+': 'TKN OPADD', '-': 'TKN OPSUB', '*': 'TKN OPMULT', '/': 'TKN OPDIV',
-            '(': 'TKN PAREN_A', ')': 'TKN PAREN_C', '[': 'TKN CORAPER', ']': 'TKN CORCIERRE',
+            '+': 'TKN OPADD', '-': 'TKN OPSUB', '*': 'TKN OPMULT', '/': 'TKN OPDIV', '%': 'TKN OPMOD',
+            '==': 'TKN EQ', '!=': 'TKN NEQ', '<': 'TKN LT', '>': 'TKN GT',
+            '<=': 'TKN LTE', '>=': 'TKN GTE',
+            '&&': 'TKN AND', '||': 'TKN OR', '!': 'TKN NOT',
+            '(': 'TKN PAREN_A', ')': 'TKN PAREN_C', 
+            '[': 'TKN CORAPER', ']': 'TKN CORCIERRE',
             '{': 'TKN LLAVE_A', '}': 'TKN LLAVE_C',
-            '=': 'TKN ASIGN', '"': 'TKN COMILLA',
-            '×': 'TKN OPMULT' # Añadido de tu bloque main
+            '=': 'TKN ASIGN', ':=': 'TKN WALRUS', ':': 'TKN COLON',
+            ',': 'TKN COMMA', '.': 'TKN DOT', ';': 'TKN PUNTO_COMA',
+            '&': 'TKN AMPERSAND', '|': 'TKN PIPE', '^': 'TKN XOR',
+            '<<': 'TKN LSHIFT', '>>': 'TKN RSHIFT', '&^': 'TKN AND_NOT',
+            '<-': 'TKN ARROW', '...': 'TKN ELLIPSIS',
+            '"': 'TKN COMILLA', "'": 'TKN COMILLA_SIMPLE',
+            '`': 'TKN BACKTICK',
+            '×': 'TKN OPMULT'
         }
-        # Tipos de datos validos
-        self.tipos_datos = {'int', 'double', 'str', 'bool'}
         
-        # Patrón regex para separar la expresion
-        self.patron = r'[a-zA-Z]:|\d+\.\d+|[a-zA-Z_][\w.]*|\d+|[^\w\s]'
+        self.patron = r'===|!==|<=|>=|&&|\|\||<<|>>|&\^|<-|\.\.\.|:=|[%&*+\-/<>=!|:.,;{}()\[\]\'"`]|[a-zA-Z_][\w.]*|\d+\.\d+|\d+'
 
     def es_identificador_valido(self, token):
         if not token: return False
@@ -27,11 +34,8 @@ class AnalizadorLexico:
             l = l.strip()
             if not l: continue
 
-            # Clasificación segun el TKN
             if l in self.tokens_fijos:
                 tipo = self.tokens_fijos[l]
-            elif l.lower() in self.tipos_datos:
-                tipo = "TKN TIPO_DATO"
             elif l.replace('.', '', 1).isdigit():
                 tipo = "TKN NUM"
             elif self.es_identificador_valido(l):

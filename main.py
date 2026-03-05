@@ -5,6 +5,7 @@ import os
 from lexer import AnalizadorLexico
 from parser import AnalizadorSintactico
 from semantic import AutomataSemantico
+from symbol_table import TablaSimbolos
 
 class CodeEditor:
     def __init__(self, root):
@@ -112,7 +113,7 @@ class CodeEditor:
         if linea_actual:
             palabras = linea_actual.split()
             for palabra in palabras:
-                if palabra in self.semantic.tipos_datos:
+                if self.semantic.tabla_simbolos.es_tipo_dato(palabra):
                     for siguiente in palabras[palabras.index(palabra)+1:]:
                         if self.semantic.validar_variable(siguiente):
                             self.semantic.variables_encontradas.add(siguiente)
@@ -122,14 +123,11 @@ class CodeEditor:
         self.update_line_numbers()
     
     def update_status(self):
-        try:
-            content = self.text_area.get(1.0, tk.END)
-            char_count = len(content) - 1
-            line_count = content.count('\n')
-            status_text = f"Caracteres: {char_count} | Líneas: {line_count}"
-            self.status_label.config(text=status_text)
-        except:
-            self.status_label.config(text="Listo")
+        content = self.text_area.get(1.0, tk.END)
+        char_count = len(content) - 1
+        line_count = content.count('\n')
+        status_text = f"Caracteres: {char_count} | Líneas: {line_count}"
+        self.status_label.config(text=status_text)
     
     def update_file_info(self):
         if self.current_file:
@@ -167,6 +165,10 @@ class CodeEditor:
         run_menu.add_command(label="Analizar Léxicamente", accelerator="F5", command=self.analizar_lexico)
         run_menu.add_command(label="Validar Estructura", accelerator="F6", command=self.validar_estructura)
         run_menu.add_command(label="Generar Árbol de Parseo", accelerator="F7", command=self.generar_arbol_parseo)
+        run_menu.add_separator()
+        run_menu.add_command(label="Validar Declaraciones Go", accelerator="F8", command=self.validar_declaraciones_go)
+        run_menu.add_command(label="Mostrar Tabla de Símbolos", accelerator="F10", command=self.mostrar_tabla_simbolos)
+        run_menu.add_separator()
         run_menu.add_command(label="Compilar", accelerator="F9", command=self.compilar_codigo)
         
         compiler_menu = tk.Menu(menubar, tearoff=0)
@@ -254,6 +256,8 @@ class CodeEditor:
         self.root.bind_all('<F5>', lambda e: self.analizar_lexico())
         self.root.bind_all('<F6>', lambda e: self.validar_estructura())
         self.root.bind_all('<F7>', lambda e: self.generar_arbol_parseo())
+        self.root.bind_all('<F8>', lambda e: self.validar_declaraciones_go())
+        self.root.bind_all('<F10>', lambda e: self.mostrar_tabla_simbolos())
         self.root.bind_all('<F9>', lambda e: self.compilar_codigo())
     
     def show_about(self):
@@ -310,6 +314,56 @@ class CodeEditor:
         self.results_text.insert(tk.END, arbol)
         
         self.status_label.config(text="Árbol de parseo generado")
+    
+    def validar_declaraciones_go(self):
+        codigo = self.text_area.get(1.0, tk.END).strip()
+        if not codigo:
+            self.results_text.delete(1.0, tk.END)
+            self.results_text.insert(tk.END, "No hay código para validar.\n")
+            return
+        
+        self.results_text.delete(1.0, tk.END)
+        self.results_text.insert(tk.END, "=== VALIDACIÓN DE DECLARACIONES GO ===\n\n")
+        
+        lineas = codigo.split('\n')
+        declaraciones_validas = 0
+        declaraciones_invalidas = 0
+        
+        for linea in lineas:
+            linea = linea.strip()
+            if not linea:
+                continue
+                
+            tokens = self.lexer.procesar(linea)
+            es_valido, mensaje, simbolo = self.semantic.validar_declaracion(tokens)
+            
+            if es_valido:
+                self.results_text.insert(tk.END, f"✓ {linea}\n")
+                self.results_text.insert(tk.END, f"  {mensaje}\n")
+                declaraciones_validas += 1
+            else:
+                self.results_text.insert(tk.END, f"✗ {linea}\n")
+                self.results_text.insert(tk.END, f"  ERROR: {mensaje}\n")
+                declaraciones_invalidas += 1
+        
+        self.results_text.insert(tk.END, f"\nResumen:\n")
+        self.results_text.insert(tk.END, f"✓ Declaraciones válidas: {declaraciones_validas}\n")
+        self.results_text.insert(tk.END, f"✗ Declaraciones inválidas: {declaraciones_invalidas}\n")
+        self.status_label.config(text=f"Validación Go: {declaraciones_validas} válidas, {declaraciones_invalidas} inválidas")
+    
+    def mostrar_tabla_simbolos(self):
+        self.results_text.delete(1.0, tk.END)
+        self.results_text.insert(tk.END, "=== TABLA COMPLETA DE SÍMBOLOS ===\n\n")
+        
+        self.semantic.imprimir_tabla_completa()
+        
+        variables = self.semantic.variables_encontradas
+        if variables:
+            self.results_text.insert(tk.END, f"\nVariables compatibilidad (set): {len(variables)}\n")
+            for var in sorted(variables):
+                self.results_text.insert(tk.END, f"  • {var}\n")
+        
+        self.status_label.config(text="Tabla de símbolos mostrada")
     
     def compilar_codigo(self):
         self.analizar_lexico()

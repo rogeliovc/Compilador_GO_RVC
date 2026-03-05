@@ -1,4 +1,3 @@
-# parser.py
 from ast_nodes import Numero, OperacionBinaria, Variable, ExpresionParentesis
 
 class AnalizadorSintactico:
