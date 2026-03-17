@@ -1,4 +1,5 @@
 import re
+from errors import agregar_error_lexico
 
 class AnalizadorLexico:
     def __init__(self):
@@ -17,18 +18,33 @@ class AnalizadorLexico:
             '<-': 'TKN ARROW', '...': 'TKN ELLIPSIS',
             '"': 'TKN COMILLA', "'": 'TKN COMILLA_SIMPLE',
             '`': 'TKN BACKTICK',
-            '×': 'TKN OPMULT'
+            '×': 'TKN OPMULT',
+            '+=': 'TKN ADDEQ', '-=': 'TKN SUBEQ', '*=': 'TKN MULTEQ', '/=': 'TKN DIVEQ', '%=': 'TKN MODEQ',
+            '&=': 'TKN ANDEQ', '|=': 'TKN OREQ', '^=': 'TKN XOREQ', '&^=': 'TKN ANDNOTEQ',
+            '<<=': 'TKN LSHIFTEQ', '>>=': 'TKN RSHIFTEQ',
+            '++': 'TKN INC', '--': 'TKN DEC'
         }
         
-        self.patron = r'===|!==|<=|>=|&&|\|\||<<|>>|&\^|<-|\.\.\.|:=|[%&*+\-/<>=!|:.,;{}()\[\]\'"`]|[a-zA-Z_][\w.]*|\d+\.\d+|\d+'
+        self.patron = r'===|!==|<=|>=|&&|\|\||<<|>>|&\^|<-|\.\.\.|:=|\+\=|-\=|\*\=|/\=|%\=|&\=|\|\=|\^\=|&\^\=|<<=|>>=|\+\+|--|[%&*+\-/<>=!|:.,;{}()\[\]\'"`]|[a-zA-Z_][\w.]*|\d+\.\d+|\d+'
 
     def es_identificador_valido(self, token):
         if not token: return False
         return token[0].isalpha() or token[0] == '_'
 
-    def procesar(self, entrada):
+    def procesar(self, entrada, linea=1):
         partes_de_la_expresion = re.findall(self.patron, entrada)
         resultado = []
+        
+        texto_reconocido = ''.join(partes_de_la_expresion)
+        if texto_reconocido != entrada:
+            for i, char in enumerate(entrada):
+                if char not in texto_reconocido and not char.isspace():
+                    agregar_error_lexico(
+                        f"Carácter inválido '{char}'",
+                        linea,
+                        i + 1,
+                        entrada.strip()
+                    )
         
         for l in partes_de_la_expresion:
             l = l.strip()
@@ -42,6 +58,12 @@ class AnalizadorLexico:
                 tipo = "TKN ID"
             else:
                 tipo = "TKN ERROR"
+                agregar_error_lexico(
+                    f"Token no reconocido '{l}'",
+                    linea,
+                    entrada.find(l) + 1,
+                    entrada.strip()
+                )
             
             resultado.append((tipo, l))
         

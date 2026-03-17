@@ -1,10 +1,17 @@
 from ast_nodes import Numero, OperacionBinaria, Variable, ExpresionParentesis
+from errors import agregar_error_patron, agregar_error_estructural
 
 class AnalizadorSintactico:
     def __init__(self):
-        pass
+        self.errores_encontrados = []
 
-    # Validación para (), [], {} (Tu código original exacto)
+        self.pila_llaves = []  
+        self.pila_parentesis = []
+        self.pila_corchetes = []
+        self.errores_archivo = []
+        
+        self.variables_declaradas = {}  
+
     def validar_apertura_cierres(self, entrada):
         pila = []
         pares = {')': '(', ']': '[', '}': '{'}
@@ -16,16 +23,406 @@ class AnalizadorSintactico:
                 if not pila or pila.pop() != pares[caracter]:
                     return False
         return len(pila) == 0
+    
+    def procesar_linea_archivo(self, tokens, linea_num):
+        for i, (tipo, valor) in enumerate(tokens):
+            if valor == '{':
+                self.pila_llaves.append((valor, linea_num, i))
+            elif valor == '}':
+                if not self.pila_llaves:
+                    self._agregar_error_llave_sin_apertura(valor, linea_num, i, tokens)
+                else:
+                    apertura, linea_apertura, pos_apertura = self.pila_llaves.pop()
+                    if apertura != '{':
+                        self._agregar_error_llaves_desbalanceadas(apertura, valor, linea_num, i, tokens)
+            elif valor == '(':
+                self.pila_parentesis.append((valor, linea_num, i))
+            elif valor == ')':
+                if not self.pila_parentesis:
+                    self._agregar_error_parentesis_sin_apertura(valor, linea_num, i, tokens)
+                else:
+                    apertura, linea_apertura, pos_apertura = self.pila_parentesis.pop()
+                    if apertura != '(':
+                        self._agregar_error_parentesis_desbalanceados(apertura, valor, linea_num, i, tokens)
+            elif valor == '[':
+                self.pila_corchetes.append((valor, linea_num, i))
+            elif valor == ']':
+                if not self.pila_corchetes:
+                    self._agregar_error_corchete_sin_apertura(valor, linea_num, i, tokens)
+                else:
+                    apertura, linea_apertura, pos_apertura = self.pila_corchetes.pop()
+                    if apertura != '[':
+                        self._agregar_error_corchetes_desbalanceados(apertura, valor, linea_num, i, tokens)
+    
+    def finalizar_archivo(self):
+        for simbolo, linea, pos in self.pila_llaves:
+            self.errores_archivo.append(f"Línea {linea}: Llave '{simbolo}' sin cerrar al final del archivo")
         
-    def procesar_tokens(self, tokens):
-        solo_simbolos = "".join([valor for tipo, valor in tokens if tipo in 
-                                 ['TKN PAREN_A', 'TKN PAREN_C', 'TKN CORAPER', 
-                                  'TKN CORCIERRE', 'TKN LLAVE_A', 'TKN LLAVE_C']])
+        for simbolo, linea, pos in self.pila_parentesis:
+            self.errores_archivo.append(f"Línea {linea}: Paréntesis '{simbolo}' sin cerrar al final del archivo")
         
-        return self.validar_apertura_cierres(solo_simbolos) 
+        for simbolo, linea, pos in self.pila_corchetes:
+            self.errores_archivo.append(f"Línea {linea}: Corchete '{simbolo}' sin cerrar al final del archivo")
+        
+        return len(self.errores_archivo) == 0
+    
+    def limpiar_estado_archivo(self):
+        self.pila_llaves.clear()
+        self.pila_parentesis.clear()
+        self.pila_corchetes.clear()
+        self.errores_archivo.clear()
+        self.variables_declaradas.clear()  
+    
+    def _agregar_error_llave_sin_apertura(self, valor, linea, pos, tokens):
+        contexto = " ".join([t[1] for t in tokens])
+        agregar_error_estructural(
+            f"Llave '{valor}' sin apertura",
+            linea,
+            pos,
+            contexto
+        )
+        self.errores_archivo.append(f"Línea {linea}: Llave '{valor}' sin apertura")
+    
+    def _agregar_error_llaves_desbalanceadas(self, apertura, cierre, linea, pos, tokens):
+        contexto = " ".join([t[1] for t in tokens])
+        agregar_error_estructural(
+            f"Llaves desbalanceadas: se abrió '{apertura}' pero se cerró '{cierre}'",
+            linea,
+            pos,
+            contexto
+        )
+        self.errores_archivo.append(f"Línea {linea}: Llaves desbalanceadas")
+    
+    def _agregar_error_parentesis_sin_apertura(self, valor, linea, pos, tokens):
+        contexto = " ".join([t[1] for t in tokens])
+        agregar_error_estructural(
+            f"Paréntesis '{valor}' sin apertura",
+            linea,
+            pos,
+            contexto
+        )
+        self.errores_archivo.append(f"Línea {linea}: Paréntesis '{valor}' sin apertura")
+    
+    def _agregar_error_parentesis_desbalanceados(self, apertura, cierre, linea, pos, tokens):
+        contexto = " ".join([t[1] for t in tokens])
+        agregar_error_estructural(
+            f"Paréntesis desbalanceados: se abrió '{apertura}' pero se cerró '{cierre}'",
+            linea,
+            pos,
+            contexto
+        )
+        self.errores_archivo.append(f"Línea {linea}: Paréntesis desbalanceados")
+    
+    def _agregar_error_corchete_sin_apertura(self, valor, linea, pos, tokens):
+        contexto = " ".join([t[1] for t in tokens])
+        agregar_error_estructural(
+            f"Corchete '{valor}' sin apertura",
+            linea,
+            pos,
+            contexto
+        )
+        self.errores_archivo.append(f"Línea {linea}: Corchete '{valor}' sin apertura")
+    
+    def _agregar_error_corchetes_desbalanceados(self, apertura, cierre, linea, pos, tokens):
+        contexto = " ".join([t[1] for t in tokens])
+        agregar_error_estructural(
+            f"Corchetes desbalanceados: se abrió '{apertura}' pero se cerró '{cierre}'",
+            linea,
+            pos,
+            contexto
+        )
+        self.errores_archivo.append(f"Línea {linea}: Corchetes desbalanceados")
+
+    def limpiar_tokens(self, tokens):
+        tokens_limpios = []
+        i = 0
+        while i < len(tokens):
+            tipo, valor = tokens[i]
+            
+            if tipo == 'TKN OPDIV' and i + 1 < len(tokens) and tokens[i + 1][1] == '/':
+                i += 2
+                while i < len(tokens) and tokens[i][1] not in ['\n', ';']:
+                    i += 1
+                continue
+            
+            if tipo not in ['TKN COMENTARIO']:
+                tokens_limpios.append((tipo, valor))
+            
+            i += 1
+        
+        return tokens_limpios
+    
+    def validar_sintaxis_go(self, tokens, linea_num=1, omitir_balance_simbolos=False):
+        self.errores_encontrados = []
+        
+        if not tokens:
+            return True
+        
+        tokens = self.limpiar_tokens(tokens)
+        
+        if not tokens:
+            return True
+        
+        self.validar_punto_coma(tokens, linea_num)
+        self.validar_estructura_sintactica(tokens, linea_num)
+        
+        if not omitir_balance_simbolos:
+            self.validar_balance_simbolos(tokens, linea_num)
+        
+        self.validar_sintaxis_funcion(tokens, linea_num)
+        
+        self.validar_operadores(tokens, linea_num)
+        
+        self.validar_keywords(tokens, linea_num)
+        
+        return len(self.errores_encontrados) == 0
+    
+    def validar_punto_coma(self, tokens, linea):
+        if not tokens:
+            return
+        
+        ultimo_token = tokens[-1]
+        
+        if ultimo_token[1] == '}':
+            return
+        
+        linea_completa = " ".join([t[1] for t in tokens])
+        
+        no_necesitan_punto_coma = [
+            'package',
+            'import',
+            'func',
+            'if',
+            'for',
+            'switch',
+            'struct',
+            'interface',
+            'type'
+        ]
+        
+        if any(linea_completa.startswith(palabra) for palabra in no_necesitan_punto_coma):
+            return
+        
+        if 'func' in linea_completa and '(' in linea_completa and '{' in linea_completa:
+            return
+        
+        if ':=' in linea_completa:
+            return
+        
+        if '=' in linea_completa and ':=' not in linea_completa and not linea_completa.startswith('var'):
+            return
+        
+        if any(palabra in linea_completa for palabra in ['print(', 'fmt.Println(']):
+            return
+        
+        if ultimo_token[1] != ';':
+            if ultimo_token[1] not in ['{', '}']:
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron(
+                    f"Falta punto y coma al final de la sentencia",
+                    linea,
+                    len(contexto),
+                    contexto
+                )
+                self.errores_encontrados.append(f"Línea {linea}: Falta punto y coma")
+    
+    def validar_estructura_sintactica(self, tokens, linea):
+        if not tokens:
+            return
+        
+        if tokens[0][1] == 'var':
+            if len(tokens) < 3:
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron(
+                    "Declaración var incompleta - estructura: var nombre tipo [= valor];",
+                    linea,
+                    0,
+                    contexto
+                )
+                self.errores_encontrados.append(f"Línea {linea}: Estructura var incompleta")
+                return
+            
+            if len(tokens) >= 3:
+                nombre = tokens[1][1]
+                tipo = tokens[2][1]
+                
+                if nombre == tipo or nombre == '=' or tipo == '=':
+                    contexto = " ".join([t[1] for t in tokens])
+                    agregar_error_patron(
+                        "Estructura var incorrecta - se espera: var nombre tipo [= valor];",
+                        linea,
+                        0,
+                        contexto
+                    )
+                    self.errores_encontrados.append(f"Línea {linea}: Estructura var incorrecta")
+        
+        elif any((t[1] == ':=') for t in tokens):
+            pos = next((i for i, t in enumerate(tokens) if (t[1] == ':=')), -1)
+            if pos == 0 or pos >= len(tokens) - 1:
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron(
+                    "Declaración corta inválida - estructura: nombre := valor;",
+                    linea,
+                    0,
+                    contexto
+                )
+                self.errores_encontrados.append(f"Línea {linea}: Estructura := incorrecta")
+    
+    def validar_balance_simbolos(self, tokens, linea):
+        simbolos = "".join([valor for tipo, valor in tokens if tipo in 
+                         ['TKN PAREN_A', 'TKN PAREN_C', 'TKN CORAPER', 
+                          'TKN CORCIERRE', 'TKN LLAVE_A', 'TKN LLAVE_C']])
+        
+        if not self.validar_apertura_cierres(simbolos):
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_estructural(
+                f"Símbolos desbalanceados en la línea",
+                linea,
+                0,
+                contexto
+            )
+            self.errores_encontrados.append(f"Línea {linea}: Símbolos desbalanceados")
+    
+    def validar_sintaxis_funcion(self, tokens, linea):
+        if not tokens or tokens[0][1] != 'func':
+            return
+        
+        if len(tokens) < 3:
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron(
+                "Declaración de función incompleta",
+                linea,
+                0,
+                contexto
+            )
+            self.errores_encontrados.append(f"Línea {linea}: Función incompleta")
+            return
+        
+        nombre = tokens[1][1]
+        if not self.es_identificador_valido(nombre):
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron(
+                f"Nombre de función inválido: '{nombre}'",
+                linea,
+                tokens[1][2] if len(tokens[1]) > 2 else 0,
+                contexto
+            )
+            self.errores_encontrados.append(f"Línea {linea}: Nombre de función inválido")
+        
+        tiene_parentesis_a = False
+        tiene_parentesis_c = False
+        tiene_llave_a = False
+        
+        for tipo, valor in tokens:
+            if valor == '(':
+                tiene_parentesis_a = True
+            elif valor == ')':
+                tiene_parentesis_c = True
+            elif valor == '{':
+                tiene_llave_a = True
+        
+        if not tiene_parentesis_a:
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron(
+                "Faltan paréntesis de apertura en declaración de función",
+                linea,
+                tokens[2][2] if len(tokens[2]) > 2 else 0,
+                contexto
+            )
+            self.errores_encontrados.append(f"Línea {linea}: Faltan paréntesis de apertura")
+        
+        if not tiene_parentesis_c:
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron(
+                "Faltan paréntesis de cierre en declaración de función",
+                linea,
+                0,
+                contexto
+            )
+            self.errores_encontrados.append(f"Línea {linea}: Faltan paréntesis de cierre")
+        
+        if not tiene_llave_a:
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron(
+                "Falta llave de apertura en cuerpo de función",
+                linea,
+                0,
+                contexto
+            )
+            self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura")
+        
+        if (self.es_identificador_valido(nombre) and tiene_parentesis_a and 
+            tiene_parentesis_c and tiene_llave_a):
+            from symbol_table import TablaSimbolos, TipoSimbolo
+            pass
+    
+    def validar_operadores(self, tokens, linea):
+        for i, token in enumerate(tokens):
+            valor = token[1]
+            
+            if valor in ['+', '-', '*', '/', '+=', '-=', '*=', '/=', '==', '!=', '<', '>', '<=', '>=']:
+                if i == 0 or i == len(tokens) - 1:
+                    contexto = " ".join([t[1] for t in tokens])
+                    agregar_error_patron(
+                        f"Operador '{valor}' sin operando",
+                        linea,
+                        i,
+                        contexto
+                    )
+                    self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
+            
+            elif valor in ['++', '--']:
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron(
+                    f"Operador '{valor}' no existe en Go",
+                    linea,
+                    i,
+                    contexto
+                )
+                self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' no existe en Go")
+    
+    def validar_keywords(self, tokens, linea):
+        keywords_go = {'package', 'import', 'func', 'var', 'const', 'if', 'else', 'for', 'break', 'continue', 'return', 'struct', 'interface', 'type', 'map', 'range', 'chan', 'select', 'defer', 'go'}
+        
+        for i, token in enumerate(tokens):
+            valor = token[1]
+            
+            if valor in keywords_go and i > 0:
+                anterior = tokens[i-1][1]
+                if anterior in ['var', 'func', 'type', 'struct']:
+                    continue
+                elif anterior == '.':
+                    continue
+                else:
+                    contexto = " ".join([t[1] for t in tokens])
+                    agregar_error_patron(
+                        f"Uso inválido de palabra reservada '{valor}' como identificador",
+                        linea,
+                        i,
+                        contexto
+                    )
+                    self.errores_encontrados.append(f"Línea {linea}: Keyword '{valor}' usado como identificador")
+    
+    def es_identificador_valido(self, nombre):
+        if not nombre:
+            return False
+        
+        if nombre[0].isdigit():
+            return False
+        
+        if not all(c.isalnum() or c == '_' for c in nombre):
+            return False
+        
+        keywords_go = {'package', 'import', 'func', 'var', 'const', 'if', 'else', 'for', 'break', 'continue', 'return', 'struct', 'interface', 'type', 'map', 'range', 'chan', 'select', 'defer', 'go', 'int', 'string', 'float', 'bool', 'true', 'false', 'nil'}
+        if nombre in keywords_go:
+            return False
+        
+        return True
+    
+    def obtener_errores(self):
+        return self.errores_encontrados
     
     def generar_arbol_parseo(self, tokens):
-        """Genera el árbol de parseo a partir de los tokens"""
         try:
             valores = [valor for tipo, valor in tokens]
             valores = self._procesar_parentesis(valores)
@@ -145,3 +542,39 @@ class AnalizadorSintactico:
             resultado += "\n"
         
         return resultado
+    
+    def validar_archivo_completo(self, codigo_completo):
+        self.errores_encontrados = []
+        self.limpiar_estado_archivo()
+        
+        from lexer import AnalizadorLexico
+        from semantic import AutomataSemantico
+        lexer = AnalizadorLexico()
+        analizador_semantico = AutomataSemantico()
+        
+        lineas = codigo_completo.split('\n')
+        errores_totales = []
+        
+        for i, linea in enumerate(lineas, 1):
+            if linea.strip():
+                tokens = lexer.procesar(linea.strip(), i)
+                
+                errores_anteriores = len(errores_totales)
+                self.validar_sintaxis_go(tokens, i, omitir_balance_simbolos=True)
+                
+                errores_totales.extend(self.errores_encontrados[errores_anteriores:])
+                
+                errores_semanticos = analizador_semantico.validar_declaracion_variable(tokens, i)
+                errores_totales.extend(errores_semanticos)
+                
+                self.procesar_linea_archivo(tokens, i)
+        
+        self.errores_encontrados = errores_totales
+        
+        self.finalizar_archivo()
+        
+        self.errores_encontrados.extend(self.errores_archivo)
+        
+        total_errores = len(self.errores_encontrados)
+        
+        return total_errores == 0

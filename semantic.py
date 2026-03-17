@@ -5,10 +5,8 @@ class AutomataSemantico:
         self.estado = 'inicio'
         self.prohibidos = {'$', '#', '(', '@'}
         
-        # NUEVA TABLA DE SÍMBOLOS (contiene tipos y palabras reservadas)
         self.tabla_simbolos = TablaSimbolos()
         
-        # MANTENER COMPATIBILIDAD con código existente
         self.variables_encontradas = set() 
 
     def transicion(self, caracter):
@@ -54,40 +52,6 @@ class AutomataSemantico:
     def validar_declaracion(self, tokens):
         return self.tabla_simbolos.validar_patron_declaracion(tokens)
     
-    def validar_funcion(self, tokens):
-        if len(tokens) < 5:
-            return False, "Declaración de función incompleta", None
-        
-        tipo_retorno = None
-        nombre_func = None
-        tiene_parentesis = False
-        tiene_llave = False
-        
-        i = 0
-        while i < len(tokens):
-            tipo, valor = tokens[i]
-            if tipo == "TKN ID" and not tipo_retorno and self.tabla_simbolos.es_tipo_dato(valor):
-                tipo_retorno = valor
-            elif tipo == "TKN ID" and valor.lower() in ["function", "func"] and not nombre_func:
-                if i + 1 < len(tokens) and tokens[i + 1][0] == "TKN ID":
-                    nombre_func = tokens[i + 1][1]
-                    i += 1
-            elif tipo == "TKN PAREN_A":
-                tiene_parentesis = True
-            elif tipo == "TKN PAREN_C" and tiene_parentesis:
-                tiene_parentesis = True
-            elif tipo == "TKN LLAVE_A":
-                tiene_llave = True
-            i += 1
-        
-        if all([tipo_retorno, nombre_func, tiene_parentesis, tiene_llave]):
-            if self.tabla_simbolos.agregar_funcion(nombre_func, tipo_retorno, [], 0):
-                return True, f"Función {nombre_func}: {tipo_retorno} registrada", None
-            else:
-                return False, f"ERROR: Función {nombre_func} ya existe", None
-        
-        return False, "Patrón de función no válido", None
-    
     def verificar_uso_variable(self, nombre_variable):
         simbolo = self.tabla_simbolos.buscar_simbolo(nombre_variable)
         if simbolo:
@@ -105,6 +69,62 @@ class AutomataSemantico:
     
     def imprimir_tabla_completa(self):
         self.tabla_simbolos.imprimir_tabla()
+    
+    def validar_declaracion_variable(self, tokens, linea):
+        if not tokens:
+            return []
+        
+        errores = []
+        
+        if tokens[0][1] == 'var':
+            if len(tokens) < 3:
+                errores.append(f"Línea {linea}: Declaración var incompleta")
+                return errores
+            
+            if len(tokens) >= 4:
+                nombre = tokens[1][1]
+                tipo = tokens[2][1] if len(tokens) > 2 else ""
+                
+                if not self._es_identificador_valido(nombre):
+                    errores.append(f"Línea {linea}: Identificador inválido '{nombre}'")
+                    return errores
+                
+                if self.tabla_simbolos.existe_simbolo(nombre):
+                    simbolo_existente = self.tabla_simbolos.buscar_simbolo(nombre)
+                    if simbolo_existente.tipo != tipo:
+                        errores.append(f"Línea {linea}: AMBIGÜEDAD - Variable '{nombre}' declarada previamente como '{simbolo_existente.tipo}' y ahora como '{tipo}'")
+                else:
+                    self.tabla_simbolos.agregar_variable(nombre, tipo, linea)
+        
+        elif any((t[1] == ':=') for t in tokens):
+            pos = next((i for i, t in enumerate(tokens) if (t[1] == ':=')), -1)
+            if pos == 0 or pos >= len(tokens) - 1:
+                errores.append(f"Línea {linea}: Declaración corta inválida")
+            else:
+                nombre = tokens[pos-1][1]
+                if self._es_identificador_valido(nombre):
+                    if self.tabla_simbolos.existe_simbolo(nombre):
+                        errores.append(f"Línea {linea}: VARIABLE DUPLICADA '{nombre}'")
+                    else:
+                        self.tabla_simbolos.agregar_variable(nombre, "inferido", linea)
+        
+        return errores
+    
+    def _es_identificador_valido(self, nombre):
+        if not nombre:
+            return False
+        
+        if nombre[0].isdigit():
+            return False
+        
+        if not all(c.isalnum() or c == '_' for c in nombre):
+            return False
+        
+        keywords_go = {'package', 'import', 'func', 'var', 'const', 'if', 'else', 'for', 'break', 'continue', 'return', 'struct', 'interface', 'type', 'map', 'range', 'chan', 'select', 'defer', 'go', 'int', 'string', 'float', 'bool', 'true', 'false', 'nil'}
+        if nombre in keywords_go:
+            return False
+        
+        return True
     
     def limpiar_variables(self):
         self.variables_encontradas.clear()
