@@ -1,12 +1,14 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
+import re
 
 from lexer import AnalizadorLexico
 from parser import AnalizadorSintactico
 from semantic import AutomataSemantico
 from symbol_table import TablaSimbolos
 from errors import limpiar_errores, imprimir_errores, obtener_resumen_errores
+from utils import es_identificador_valido, es_tipo_dato, KEYWORDS_GO, TIPOS_BASICOS
 
 class CodeEditor:
     def __init__(self, root):
@@ -71,9 +73,68 @@ class CodeEditor:
         
         self.text_area.bind('<KeyRelease>', self.on_key_release)
         self.text_area.bind('<MouseWheel>', self.on_mousewheel)
+        self.text_area.bind('<Return>', self.on_enter_key)
         
         self.update_line_numbers()
         self.setup_menu()
+        self.setup_syntax_highlighting()
+        
+    def setup_syntax_highlighting(self):
+        """Configura los colores (tags) para el editor de código"""
+        self.text_area.tag_configure("Keyword", foreground="#cc7832", font=('Consolas', 11, 'bold'))
+        self.text_area.tag_configure("Type", foreground="#9876aa", font=('Consolas', 11, 'italic'))
+        self.text_area.tag_configure("String", foreground="#6a8759")
+        self.text_area.tag_configure("Comment", foreground="#808080", font=('Consolas', 11, 'italic'))
+        self.text_area.tag_configure("Number", foreground="#6897bb")
+        self.text_area.tag_configure("Function", foreground="#ffc66d")
+    
+    def highlight_syntax(self, event=None):
+        """Aplica colores al código escrito usando expresiones regulares"""
+        for tag in ["Keyword", "Type", "String", "Comment", "Number", "Function"]:
+            self.text_area.tag_remove(tag, "1.0", tk.END)
+            
+        texto = self.text_area.get("1.0", tk.END)
+        if not texto.strip(): return
+        
+        # 1. Comentarios //
+        for match in re.finditer(r'//.*', texto):
+            inicio = f"1.0 + {match.start()} chars"
+            fin = f"1.0 + {match.end()} chars"
+            self.text_area.tag_add("Comment", inicio, fin)
+            
+        # 2. Cadenas de texto "..." o `...`
+        for match in re.finditer(r'(".*?"|`.*?`)', texto):
+            inicio = f"1.0 + {match.start()} chars"
+            fin = f"1.0 + {match.end()} chars"
+            self.text_area.tag_add("String", inicio, fin)
+            
+        # 3. Números
+        for match in re.finditer(r'\b\d+(\.\d+)?\b', texto):
+            inicio = f"1.0 + {match.start()} chars"
+            fin = f"1.0 + {match.end()} chars"
+            self.text_area.tag_add("Number", inicio, fin)
+            
+        # 4. Palabras reservadas (Go)
+        pattern_kw = r'\b(' + '|'.join(KEYWORDS_GO) + r')\b'
+        for match in re.finditer(pattern_kw, texto):
+            inicio = f"1.0 + {match.start()} chars"
+            fin = f"1.0 + {match.end()} chars"
+            self.text_area.tag_add("Keyword", inicio, fin)
+            
+        # 5. Tipos de datos básicos
+        pattern_types = r'\b(' + '|'.join(TIPOS_BASICOS) + r')\b'
+        for match in re.finditer(pattern_types, texto):
+            inicio = f"1.0 + {match.start()} chars"
+            fin = f"1.0 + {match.end()} chars"
+            self.text_area.tag_add("Type", inicio, fin)
+            
+        # 6. Funciones Custom (Lo que esté antes de un paréntesis que no sea un keyword)
+        for match in re.finditer(r'\b([a-zA-Z_]\w*)\s*\(', texto):
+            nombre_func = match.group(1)
+            if nombre_func not in KEYWORDS_GO and nombre_func not in TIPOS_BASICOS:
+                inicio = f"1.0 + {match.start(1)} chars"
+                fin = f"1.0 + {match.end(1)} chars"
+                self.text_area.tag_add("Function", inicio, fin)
     
     def update_line_numbers(self):
         self.line_numbers.config(state='normal')
@@ -108,15 +169,36 @@ class CodeEditor:
             self.update_line_numbers()
         self.update_status()
         self.validar_en_tiempo_real()
+        self.highlight_syntax()
+        
+    def on_enter_key(self, event=None):
+        """Autoindentación: replica la sangría de la línea anterior"""
+        linea_actual_str = self.text_area.get("insert linestart", "insert lineend")
+        identacion_coincidencia = re.match(r'^(\s+)', linea_actual_str)
+        
+        espacio_a_insertar = ""
+        if identacion_coincidencia:
+            espacio_a_insertar = identacion_coincidencia.group(1)
+            
+        # Si la línea terminó en {, agregamos sangría extra
+        if linea_actual_str.strip().endswith('{'):
+            espacio_a_insertar += "    "
+            
+        if espacio_a_insertar:
+            self.text_area.insert("insert lineend", "\n" + espacio_a_insertar)
+            self.update_line_numbers()
+            self.update_status()
+            self.highlight_syntax()
+            return "break" # Detener el salto nativo extra de tk.Text
     
     def validar_en_tiempo_real(self):
         linea_actual = self.text_area.get("insert linestart", "insert lineend").strip()
         if linea_actual:
             palabras = linea_actual.split()
             for palabra in palabras:
-                if self.semantic.tabla_simbolos.es_tipo_dato(palabra):
+                if es_tipo_dato(palabra):
                     for siguiente in palabras[palabras.index(palabra)+1:]:
-                        if self.semantic.validar_variable(siguiente):
+                        if es_identificador_valido(siguiente):
                             self.semantic.variables_encontradas.add(siguiente)
                             break
     
@@ -162,26 +244,26 @@ class CodeEditor:
         edit_menu.add_command(label="Pegar", accelerator="Ctrl+V", command=lambda: self.text_area.event_generate("<<Paste>>"))
         
         run_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Ejecutar", menu=run_menu)
-        run_menu.add_command(label="Analizar Léxicamente", accelerator="F5", command=self.analizar_lexico)
-        run_menu.add_command(label="Validar Estructura", accelerator="F6", command=self.validar_estructura)
-        run_menu.add_command(label="Generar Árbol de Parseo", accelerator="F7", command=self.generar_arbol_parseo)
+        menubar.add_cascade(label="Compilación", menu=run_menu)
+        run_menu.add_command(label="Paso 1: Análisis Léxico (Tokens)", accelerator="F5", command=self.analizar_lexico)
         run_menu.add_separator()
-        run_menu.add_command(label="Validar Declaraciones Go", accelerator="F8", command=self.validar_declaraciones_go)
-        run_menu.add_command(label="Validar Sintaxis Completa", accelerator="Ctrl+Y", command=self.validar_sintaxis_completa)
-        run_menu.add_command(label="Mostrar Tabla de Símbolos", accelerator="F10", command=self.mostrar_tabla_simbolos)
+        run_menu.add_command(label="Paso 2a: Validar Bloques (Sintáctico)", accelerator="F6", command=self.validar_estructura)
+        run_menu.add_command(label="Paso 2b: Generar Árbol de Parseo", accelerator="F7", command=self.generar_arbol_parseo)
         run_menu.add_separator()
-        run_menu.add_command(label="Compilar con Errores", accelerator="F9", command=self.compilar_codigo)
+        run_menu.add_command(label="Paso 3: Análisis Semántico", accelerator="F8", command=self.validar_declaraciones_go)
+        run_menu.add_separator()
+        run_menu.add_command(label="Ver Tabla de Símbolos Generada", accelerator="F10", command=self.mostrar_tabla_simbolos)
+        run_menu.add_separator()
+        run_menu.add_command(label="Ejecutar Pipeline Completo", accelerator="F9", command=self.compilar_codigo)
         
         compiler_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Compiladores", menu=compiler_menu)
-        compiler_menu.add_command(label="Limpiar Resultados", command=self.limpiar_resultados)
+        menubar.add_cascade(label="Herramientas", menu=compiler_menu)
+        compiler_menu.add_command(label="Limpiar Consola de Resultados", command=self.limpiar_resultados)
         compiler_menu.add_separator()
-        compiler_menu.add_command(label="Guardar Análisis", command=self.guardar_analisis)
+        compiler_menu.add_command(label="Exportar Análisis a TXT", command=self.guardar_analisis)
         compiler_menu.add_separator()
         compiler_menu.add_command(label="Limpiar Errores del Sistema", accelerator="F11", command=self.limpiar_errores_sistema)
         compiler_menu.add_command(label="Mostrar Errores Detallados", accelerator="F12", command=self.mostrar_errores_detallados)
-        compiler_menu.add_command(label="Exportar Errores", accelerator="Ctrl+E", command=self.exportar_errores_archivo)
         
         variables_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Variables", menu=variables_menu)
@@ -220,6 +302,7 @@ class CodeEditor:
                     self.text_area.insert(1.0, file.read())
                 self.current_file = file_path
                 self.root.title(f"{file_path} - Compilador Mini-Go")
+                self.highlight_syntax()
                 
                 # Limpiar variables y tabla de símbolos al abrir nuevo archivo
                 self.semantic.variables_encontradas.clear()
@@ -275,16 +358,17 @@ class CodeEditor:
         
         # Limpiar tabla de símbolos pero mantener tipos básicos
         self.semantic.variables_encontradas.clear()
-        from symbol_table import TablaSimbolos
         self.semantic.tabla_simbolos = TablaSimbolos()
         
+        # Limpiar historial de llaves/corchetes del analizador sintáctico
+        self.parser = AnalizadorSintactico()
+        
         self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(tk.END, "🚀 COMPILACIÓN COMPLETA CON SISTEMA DE ERRORES\n")
-        self.results_text.insert(tk.END, "=" * 60 + "\n\n")
+        self.results_text.insert(tk.END, "Iniciando compilación (Mini-Go Compiler v1.0)\n")
+        self.results_text.insert(tk.END, "-" * 60 + "\n\n")
         
         # 1. Análisis léxico con detección de errores
-        self.results_text.insert(tk.END, "📝 1. ANÁLISIS LÉXICO CON DETECCIÓN DE ERRORES\n")
-        self.results_text.insert(tk.END, "-" * 40 + "\n")
+        self.results_text.insert(tk.END, "[Fase 1] Análisis Léxico (Tokenizado)\n")
         
         lineas = codigo.split('\n')
         tokens_totales = []
@@ -295,11 +379,29 @@ class CodeEditor:
                 tokens_totales.extend(tokens_linea)
         
         # Mostrar resumen del análisis léxico
-        self.results_text.insert(tk.END, f"Total de tokens procesados: {len(tokens_totales)}\n")
+        self.results_text.insert(tk.END, f"  > Total de tokens identificados: {len(tokens_totales)}\n")
         
-        # 2. Análisis semántico completo
-        self.results_text.insert(tk.END, "\n🧠 2. ANÁLISIS SEMÁNTICO COMPLETO\n")
-        self.results_text.insert(tk.END, "-" * 40 + "\n")
+        # 2. Análisis sintáctico estructural
+        self.results_text.insert(tk.END, "\n[Fase 2] Análisis Sintáctico (Parser)\n")
+        
+        es_sintaxis_valida = True
+        for i, linea in enumerate(lineas, 1):
+            if linea.strip() and not linea.strip().startswith('//'):
+                tokens = self.lexer.procesar(linea, i)
+                if not self.parser.validar_sintaxis_go(tokens, i, omitir_balance_simbolos=True):
+                    es_sintaxis_valida = False
+                self.parser.procesar_linea_archivo(tokens, i)
+        
+        if not self.parser.finalizar_archivo():
+            es_sintaxis_valida = False
+            
+        if es_sintaxis_valida:
+            self.results_text.insert(tk.END, "  > Status: Sintaxis de bloques estructuralmente válida.\n")
+        else:
+            self.results_text.insert(tk.END, "  > Status: (ERROR) Se detectaron bloques o estructuras inválidas.\n")
+
+        # 3. Análisis semántico completo
+        self.results_text.insert(tk.END, "\n[Fase 3] Análisis Semántico (Declaraciones)\n")
         
         declaraciones_validas = 0
         declaraciones_invalidas = 0
@@ -313,45 +415,42 @@ class CodeEditor:
             es_valido, mensaje, simbolo = self.semantic.validar_declaracion(tokens)
             
             if es_valido:
-                self.results_text.insert(tk.END, f"✓ Línea {i}: {mensaje}\n")
+                self.results_text.insert(tk.END, f"  [PASS] Línea {i}: {mensaje}\n")
                 declaraciones_validas += 1
             elif 'no es declaración' in mensaje.lower() or 'llamada a función' in mensaje.lower() or 'estructura de control' in mensaje.lower():
-                self.results_text.insert(tk.END, f"○ Línea {i}: {mensaje}\n")
+                self.results_text.insert(tk.END, f"  [INFO] Línea {i}: {mensaje}\n")
                 lineas_ignoradas += 1
             else:
-                self.results_text.insert(tk.END, f"✗ Línea {i}: {mensaje}\n")
+                self.results_text.insert(tk.END, f"  [FAIL] Línea {i}: {mensaje}\n")
                 declaraciones_invalidas += 1
         
-        # 3. Resumen del análisis
-        self.results_text.insert(tk.END, f"\n📊 RESUMEN DEL ANÁLISIS\n")
-        self.results_text.insert(tk.END, "-" * 40 + "\n")
+        # 4. Resumen del análisis
+        self.results_text.insert(tk.END, f"\n[Reporte de Validación]\n")
         self.results_text.insert(tk.END, f"Líneas procesadas: {len(lineas)}\n")
-        self.results_text.insert(tk.END, f"✓ Declaraciones válidas: {declaraciones_validas}\n")
-        self.results_text.insert(tk.END, f"✗ Declaraciones inválidas: {declaraciones_invalidas}\n")
-        self.results_text.insert(tk.END, f"○ Líneas ignoradas: {lineas_ignoradas}\n")
+        self.results_text.insert(tk.END, f"  - Declaraciones válidas: {declaraciones_validas}\n")
+        self.results_text.insert(tk.END, f"  - Declaraciones inválidas: {declaraciones_invalidas}\n")
+        self.results_text.insert(tk.END, f"  - Estructuras ignoradas: {lineas_ignoradas}\n")
         
-        # 4. Mostrar errores detectados por el sistema
-        self.results_text.insert(tk.END, f"\n🚨 4. ERRORES DETECTADOS POR EL SISTEMA\n")
-        self.results_text.insert(tk.END, "-" * 40 + "\n")
+        # 5. Mostrar errores detectados por el sistema
+        self.results_text.insert(tk.END, f"\n[Diagnóstico de Errores Global]\n")
         
         resumen_errores = obtener_resumen_errores()
         
         if resumen_errores['total_errores'] > 0:
-            self.results_text.insert(tk.END, f"🔴 ERRORES SINTÁCTICOS: {resumen_errores['total_sintacticos']}\n")
+            self.results_text.insert(tk.END, f"  [!] ERRORES SINTÁCTICOS: {resumen_errores['total_sintacticos']}\n")
             for cat, count in resumen_errores['detalle_sintacticos'].items():
                 if count > 0:
-                    self.results_text.insert(tk.END, f"  • {cat}: {count}\n")
+                    self.results_text.insert(tk.END, f"      > {cat}: {count}\n")
             
-            self.results_text.insert(tk.END, f"\n🟡 ERRORES SEMÁNTICOS: {resumen_errores['total_semanticos']}\n")
+            self.results_text.insert(tk.END, f"\n  [!] ERRORES SEMÁNTICOS: {resumen_errores['total_semanticos']}\n")
             for cat, count in resumen_errores['detalle_semanticos'].items():
                 if count > 0:
-                    self.results_text.insert(tk.END, f"  • {cat}: {count}\n")
+                    self.results_text.insert(tk.END, f"      > {cat}: {count}\n")
         else:
-            self.results_text.insert(tk.END, "✅ ¡No se detectaron errores!\n")
+            self.results_text.insert(tk.END, "  > 0 errores detectados transversalmente.\n")
         
-        # 5. Estado de la tabla de símbolos
-        self.results_text.insert(tk.END, f"\n🗃️ 5. ESTADO DE LA TABLA DE SÍMBOLOS\n")
-        self.results_text.insert(tk.END, "-" * 40 + "\n")
+        # 6. Estado de la tabla de símbolos
+        self.results_text.insert(tk.END, f"\n[Tabla de Símbolos]\n")
         
         # Contar símbolos por tipo
         variables = 0
@@ -367,32 +466,29 @@ class CodeEditor:
                     funciones += 1
                 elif simbolo.tipo_simbolo.value == 'tipo_dato' and simbolo.tipo_dato == 'struct':
                     structs += 1
+                elif 'pkg_' in nombre:
+                    imports += 1
                 elif simbolo.tipo_dato == 'import':
                     imports += 1
         
-        self.results_text.insert(tk.END, f"Total de símbolos registrados: {len(self.semantic.tabla_simbolos.simbolos)}\n")
-        self.results_text.insert(tk.END, f"• Variables: {variables}\n")
-        self.results_text.insert(tk.END, f"• Funciones: {funciones}\n")
-        self.results_text.insert(tk.END, f"• Structs: {structs}\n")
-        self.results_text.insert(tk.END, f"• Imports: {imports}\n")
+        self.results_text.insert(tk.END, f"  Registros Totales: {len(self.semantic.tabla_simbolos.simbolos)}\n")
+        self.results_text.insert(tk.END, f"  Formatos: ({variables} Vars, {funciones} Funcs, {structs} Structs, {imports} PKGs)\n")
         
-        # 6. Resultado final
-        self.results_text.insert(tk.END, f"\n🎯 6. RESULTADO FINAL DE LA COMPILACIÓN\n")
-        self.results_text.insert(tk.END, "=" * 40 + "\n")
+        # 7. Resultado final
+        self.results_text.insert(tk.END, f"\n[COMPILATION RESULT]\n")
+        self.results_text.insert(tk.END, "=" * 60 + "\n")
         
         if resumen_errores['total_errores'] == 0:
-            self.results_text.insert(tk.END, "🎉 ¡COMPILACIÓN EXITOSA! No se detectaron errores.\n")
-            self.status_label.config(text="✅ Compilación exitosa")
+            self.results_text.insert(tk.END, "BUILD SUCCESSFUL\n")
+            self.status_label.config(text="Status: BUILD SUCCESSFUL")
         else:
-            self.results_text.insert(tk.END, f"⚠️  COMPILACIÓN COMPLETADA CON {resumen_errores['total_errores']} ERRORES\n")
-            self.status_label.config(text=f"⚠️ Compilada con {resumen_errores['total_errores']} errores")
+            self.results_text.insert(tk.END, f"BUILD FAILED with {resumen_errores['total_errores']} errors.\n")
+            self.status_label.config(text=f"Status: BUILD FAILED ({resumen_errores['total_errores']} err)")
         
-        # 7. Opciones adicionales
-        self.results_text.insert(tk.END, f"\n🔧 7. OPCIONES ADICIONALES\n")
-        self.results_text.insert(tk.END, "-" * 40 + "\n")
-        self.results_text.insert(tk.END, "• Presione F12 para ver reporte detallado de errores\n")
-        self.results_text.insert(tk.END, "• Presione Ctrl+E para exportar errores a archivo\n")
-        self.results_text.insert(tk.END, "• Presione Ctrl+T para mostrar tabla de símbolos completa\n")
+        # 8. Opciones adicionales
+        self.results_text.insert(tk.END, f"\n# Comandos adicionales:\n")
+        self.results_text.insert(tk.END, "  [F12] Mostrar Reporte Detallado de Errores\n")
+        self.results_text.insert(tk.END, "  [F10] Inspeccionar RAM de Tabla de Símbolos\n")
     
     def analizar_lexico(self):
         codigo = self.text_area.get(1.0, tk.END).strip()
@@ -439,7 +535,7 @@ class CodeEditor:
         limpiar_errores()
         
         self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(tk.END, "🔍 VALIDACIÓN SINTÁCTICA COMPLETA (COMPILADOR REAL)\n")
+        self.results_text.insert(tk.END, " VALIDACIÓN SINTÁCTICA\n")
         self.results_text.insert(tk.END, "=" * 60 + "\n\n")
         
         # Usar análisis de archivo completo
@@ -612,36 +708,7 @@ class CodeEditor:
         self.results_text.insert(tk.END, "🧹 Errores del sistema limpiados.\n")
         self.status_label.config(text="Errores limpiados")
     
-    def exportar_errores_archivo(self):
-        """Exporta los errores a un archivo"""
-        from errors import error_manager
-        
-        resumen_errores = obtener_resumen_errores()
-        if resumen_errores['total_errores'] == 0:
-            messagebox.showinfo("Información", "No hay errores para exportar.")
-            return
-        
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            filetypes=[("Archivos de texto", "*.txt"), ("Archivos JSON", "*.json"), ("Todos los archivos", "*.*")]
-        )
-        
-        if file_path:
-            try:
-                # Determinar formato por extensión
-                if file_path.endswith('.json'):
-                    contenido = error_manager.exportar_errores('json')
-                else:
-                    contenido = error_manager.exportar_errores('texto')
-                
-                with open(file_path, 'w', encoding='utf-8') as file:
-                    file.write(contenido)
-                
-                messagebox.showinfo("Exportado", f"Errores exportados a: {file_path}")
-                self.status_label.config(text="Errores exportados")
-            except Exception as e:
-                messagebox.showerror("Error", f"No se pudo exportar: {e}")
-    
+
     def ver_variables(self):
         variables = self.semantic.variables_encontradas
         self.results_text.delete(1.0, tk.END)
@@ -699,7 +766,6 @@ class CodeEditor:
         self.root.bind_all('<F10>', lambda e: self.mostrar_tabla_simbolos())
         self.root.bind_all('<F11>', lambda e: self.limpiar_errores_sistema())
         self.root.bind_all('<F12>', lambda e: self.mostrar_errores_detallados())
-        self.root.bind_all('<Control-e>', lambda e: self.exportar_errores_archivo())
         self.root.bind_all('<Control-t>', lambda e: self.mostrar_tabla_simbolos())
     
     def show_help(self):
@@ -714,7 +780,6 @@ class CodeEditor:
             "F10: Mostrar Tabla de Símbolos\n"
             "F11: Limpiar Errores del Sistema\n"
             "F12: Mostrar Errores Detallados\n"
-            "Ctrl+E: Exportar Errores a Archivo\n"
             "Ctrl+T: Mostrar Tabla de Símbolos\n\n"
             "Atajos de archivo:\n"
             "Ctrl+N: Nuevo archivo\n"

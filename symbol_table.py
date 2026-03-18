@@ -1,11 +1,6 @@
-from typing import Dict, List, Optional, Any
 from enum import Enum
-from errors import (
-    agregar_error_declaracion, 
-    agregar_error_tipo, 
-    agregar_error_redefinicion,
-    agregar_error_patron
-)
+from utils import TIPOS_BASICOS, PALABRAS_RESERVADAS, es_tipo_dato, es_palabra_reservada
+from errors import agregar_error_redefinicion, agregar_error_patron, agregar_error_declaracion, agregar_error_tipo, agregar_error_ambito, agregar_error_uso
 
 class TipoSimbolo(Enum):
     VARIABLE = "variable"
@@ -44,49 +39,15 @@ class TablaSimbolos:
         self._registrar_tipos_basicos()
     
     def _registrar_tipos_basicos(self):
-        tipos_basicos = [
-            'int', 'int8', 'int16', 'int32', 'int64',
-            'uint', 'uint8', 'uint16', 'uint32', 'uint64',
-            'float32', 'float64', 'complex64', 'complex128',
-            'string', 'bool', 'byte', 'rune', 'void'
-        ]
-        
-        palabras_reservadas = [
-            'break', 'case', 'chan', 'const', 'continue', 'default',
-            'defer', 'else', 'fallthrough', 'for', 'func', 'go',
-            'goto', 'if', 'import', 'interface', 'map', 'package',
-            'range', 'return', 'select', 'struct', 'switch', 'type',
-            'var', 'true', 'false', 'nil', 'iota'
-        ]
-        
-        for tipo in tipos_basicos:
+        for tipo in TIPOS_BASICOS:
             simbolo = Simbolo(tipo, TipoSimbolo.TIPO_DATO, tipo, 0)
             self.agregar_simbolo(simbolo)
         
-        for palabra in palabras_reservadas:
+        for palabra in PALABRAS_RESERVADAS:
             simbolo = Simbolo(palabra, TipoSimbolo.PALABRA_RESERVADA, palabra, 0)
             self.agregar_simbolo(simbolo)
     
-    def es_tipo_dato(self, token):
-        tipos_basicos = [
-            'int', 'int8', 'int16', 'int32', 'int64',
-            'uint', 'uint8', 'uint16', 'uint32', 'uint64',
-            'float32', 'float64', 'complex64', 'complex128',
-            'string', 'bool', 'byte', 'rune', 'void'
-        ]
-        return token in tipos_basicos
-    
-    def es_palabra_reservada(self, token):
-        palabras_reservadas = [
-            'break', 'case', 'chan', 'const', 'continue', 'default',
-            'defer', 'else', 'fallthrough', 'for', 'func', 'go',
-            'goto', 'if', 'import', 'interface', 'map', 'package',
-            'range', 'return', 'select', 'struct', 'switch', 'type',
-            'var', 'true', 'false', 'nil', 'iota'
-        ]
-        return token in palabras_reservadas
-    
-    def agregar_simbolo(self, simbolo: Simbolo) -> bool:
+    def agregar_simbolo(self, simbolo) -> bool:
         if simbolo.nombre in self.simbolos:
             # Verificar si ya existe en el ámbito actual
             for s in self.simbolos[simbolo.nombre]:
@@ -160,23 +121,7 @@ class TablaSimbolos:
         if len(self.pila_ambitos) > 1:
             self.pila_ambitos.pop()
             self.ambito_actual = self.pila_ambitos[-1]
-    
-    def obtener_variables(self) -> List[Simbolo]:
-        variables = []
-        for simbolos in self.simbolos.values():
-            for simbolo in simbolos:
-                if simbolo.tipo_simbolo == TipoSimbolo.VARIABLE:
-                    variables.append(simbolo)
-        return variables
-    
-    def obtener_funciones(self) -> List[Simbolo]:
-        funciones = []
-        for simbolos in self.simbolos.values():
-            for simbolo in simbolos:
-                if simbolo.tipo_simbolo == TipoSimbolo.FUNCION:
-                    funciones.append(simbolo)
-        return funciones
-    
+
     def validar_patron_declaracion(self, tokens: List[tuple]) -> tuple[bool, str, Optional[Simbolo]]:
         if len(tokens) < 1:
             return False, "Línea vacía", None
@@ -195,6 +140,18 @@ class TablaSimbolos:
         if len(tokens) == 1 and tokens[0][0] in ["TKN LLAVE_A", "TKN LLAVE_C", "TKN PAREN_A", "TKN PAREN_C"]:
             return False, "Estructura de control (no es declaración)", None
         
+        # Patrón 0.5: package nombre
+        if (len(tokens) >= 2 and tokens[0][0] == "TKN ID" and tokens[0][1] == "package" and
+            tokens[1][0] == "TKN ID"):
+            
+            paquete_nombre = tokens[1][1]
+            simbolo_id = f"pkg_{paquete_nombre}"
+            simbolo = Simbolo(simbolo_id, TipoSimbolo.PALABRA_RESERVADA, "package", 0, self.ambito_actual)
+            if self.agregar_simbolo(simbolo):
+                return True, f"Paquete \"{paquete_nombre}\" registrado", simbolo
+            else:
+                return False, f"ERROR: Paquete \"{paquete_nombre}\" ya existe", None
+
         # Patrón 1: import "paquete" (import simple)
         if (len(tokens) >= 3 and tokens[0][0] == "TKN ID" and tokens[0][1] == "import" and
             tokens[1][0] == "TKN COMILLA"):
@@ -289,7 +246,7 @@ class TablaSimbolos:
             # Buscar tipo de retorno después de paréntesis
             for j in range(i, len(tokens)):
                 if tokens[j][0] == "TKN PAREN_C" and j + 1 < len(tokens):
-                    if tokens[j + 1][0] == "TKN ID" and self.es_tipo_dato(tokens[j + 1][1]):
+                    if tokens[j + 1][0] == "TKN ID" and es_tipo_dato(tokens[j + 1][1]):
                         tipo_retorno = tokens[j + 1][1]
                     break
             
@@ -320,22 +277,26 @@ class TablaSimbolos:
                 return False, f"ERROR: Struct {nombre_struct} ya existe en el ámbito actual", None
         
         # Patrón 6: var nombre tipo (Go)
-        if (len(tokens) >= 3 and tokens[0][0] == "TKN ID" and tokens[0][1] == "var" and
-            tokens[1][0] == "TKN ID" and tokens[2][0] == "TKN ID"):
+        if len(tokens) >= 3 and tokens[0][0] == "TKN ID" and tokens[0][1] == "var" and tokens[1][0] == "TKN ID":
             
             nombre_var = tokens[1][1]
-            tipo_dato = tokens[2][1]
+            tipo_dato = ""
+            i = 2
             
-            if not self.es_tipo_dato(tipo_dato):
-                # Error de tipo inválido
-                agregar_error_tipo(
-                    f"Tipo de dato '{tipo_dato}' no válido",
-                    0,  # línea se debería pasar como parámetro
-                    0,
-                    f"var {nombre_var} {tipo_dato}",
-                    tipo_dato
-                )
-                return False, f"Tipo de dato '{tipo_dato}' no válido", None
+            # Checar si es puntero
+            if i < len(tokens) and tokens[i][0] == "TKN OPMULT" and tokens[i][1] == "*":
+                tipo_dato += "*"
+                i += 1
+                
+            if i < len(tokens) and tokens[i][0] == "TKN ID":
+                tipo_dato += tokens[i][1]
+                i += 1
+            
+            # Verificar si el tipo base es válido
+            tipo_base = tipo_dato.replace("*", "")
+            if not es_tipo_dato(tipo_base) and tipo_base != "struct":
+                # Si no es tipo de dato básico, asumiremos que puede ser un interface u objeto
+                pass
             
             tiene_asignacion = any(t[0] == "TKN ASIGN" or t[0] == "TKN WALRUS" for t in tokens)
             
@@ -371,13 +332,17 @@ class TablaSimbolos:
             else:
                 return False, f"ERROR: Variable {nombre_var} ya existe en el ámbito actual", None
         
+        # Si el token incluye la palabra "var" y llegó hasta aquí, no es un Patrón 8
+        if any(t[1] == "var" for t in tokens):
+            return False, "Error de declaración con keyword 'var' mal formado", None
+        
         # Patrón 8: tipo nombre = valor (Go)
         tipo_dato = None
         nombre_var = None
         tiene_asignacion = False
         
         for i, (tipo, valor) in enumerate(tokens):
-            if tipo == "TKN ID" and not tipo_dato and self.es_tipo_dato(valor):
+            if tipo == "TKN ID" and not tipo_dato and es_tipo_dato(valor):
                 tipo_dato = valor
             elif tipo == "TKN ID" and tipo_dato and not nombre_var:
                 nombre_var = valor
@@ -406,14 +371,7 @@ class TablaSimbolos:
             return True, f"Variable {nombre_var}: {tipo_dato} registrada", simbolo
         else:
             return False, f"ERROR: Variable {nombre_var} ya existe en el ámbito actual", None
-    
-    def limpiar(self):
-        """Limpia la tabla de símbolos y el detector de ambigüedad"""
-        self.simbolos.clear()
-        self.pila_ambitos = [Ambito.GLOBAL]
-        self.ambito_actual = Ambito.GLOBAL
-        self.variables_declaradas.clear()  # Limpiar detector de ambigüedad
-        self._registrar_tipos_basicos()
+
     
     def imprimir_tabla(self):
         print("=== TABLA DE SÍMBOLOS ===")

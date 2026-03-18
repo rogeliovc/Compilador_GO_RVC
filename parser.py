@@ -1,5 +1,6 @@
-from ast_nodes import Numero, OperacionBinaria, Variable, ExpresionParentesis
+from ast_nodes import Numero, OperacionBinaria, Variable
 from errors import agregar_error_patron, agregar_error_estructural
+from utils import es_identificador_valido, KEYWORDS_GO
 
 class AnalizadorSintactico:
     def __init__(self):
@@ -30,29 +31,29 @@ class AnalizadorSintactico:
                 self.pila_llaves.append((valor, linea_num, i))
             elif valor == '}':
                 if not self.pila_llaves:
-                    self._agregar_error_llave_sin_apertura(valor, linea_num, i, tokens)
+                    self._agregar_error_sin_apertura("Llave", valor, linea_num, i, tokens)
                 else:
                     apertura, linea_apertura, pos_apertura = self.pila_llaves.pop()
                     if apertura != '{':
-                        self._agregar_error_llaves_desbalanceadas(apertura, valor, linea_num, i, tokens)
+                        self._agregar_error_desbalanceado("Llaves", apertura, valor, linea_num, i, tokens)
             elif valor == '(':
                 self.pila_parentesis.append((valor, linea_num, i))
             elif valor == ')':
                 if not self.pila_parentesis:
-                    self._agregar_error_parentesis_sin_apertura(valor, linea_num, i, tokens)
+                    self._agregar_error_sin_apertura("Paréntesis", valor, linea_num, i, tokens)
                 else:
                     apertura, linea_apertura, pos_apertura = self.pila_parentesis.pop()
                     if apertura != '(':
-                        self._agregar_error_parentesis_desbalanceados(apertura, valor, linea_num, i, tokens)
+                        self._agregar_error_desbalanceado("Paréntesis", apertura, valor, linea_num, i, tokens)
             elif valor == '[':
                 self.pila_corchetes.append((valor, linea_num, i))
             elif valor == ']':
                 if not self.pila_corchetes:
-                    self._agregar_error_corchete_sin_apertura(valor, linea_num, i, tokens)
+                    self._agregar_error_sin_apertura("Corchete", valor, linea_num, i, tokens)
                 else:
                     apertura, linea_apertura, pos_apertura = self.pila_corchetes.pop()
                     if apertura != '[':
-                        self._agregar_error_corchetes_desbalanceados(apertura, valor, linea_num, i, tokens)
+                        self._agregar_error_desbalanceado("Corchetes", apertura, valor, linea_num, i, tokens)
     
     def finalizar_archivo(self):
         for simbolo, linea, pos in self.pila_llaves:
@@ -73,65 +74,25 @@ class AnalizadorSintactico:
         self.errores_archivo.clear()
         self.variables_declaradas.clear()  
     
-    def _agregar_error_llave_sin_apertura(self, valor, linea, pos, tokens):
+    def _agregar_error_sin_apertura(self, tipo, valor, linea, pos, tokens):
         contexto = " ".join([t[1] for t in tokens])
         agregar_error_estructural(
-            f"Llave '{valor}' sin apertura",
+            f"{tipo} '{valor}' sin apertura",
             linea,
             pos,
             contexto
         )
-        self.errores_archivo.append(f"Línea {linea}: Llave '{valor}' sin apertura")
+        self.errores_archivo.append(f"Línea {linea}: {tipo} '{valor}' sin apertura")
     
-    def _agregar_error_llaves_desbalanceadas(self, apertura, cierre, linea, pos, tokens):
+    def _agregar_error_desbalanceado(self, tipo, apertura, cierre, linea, pos, tokens):
         contexto = " ".join([t[1] for t in tokens])
         agregar_error_estructural(
-            f"Llaves desbalanceadas: se abrió '{apertura}' pero se cerró '{cierre}'",
+            f"{tipo} desbalanceados: se abrió '{apertura}' pero se cerró '{cierre}'",
             linea,
             pos,
             contexto
         )
-        self.errores_archivo.append(f"Línea {linea}: Llaves desbalanceadas")
-    
-    def _agregar_error_parentesis_sin_apertura(self, valor, linea, pos, tokens):
-        contexto = " ".join([t[1] for t in tokens])
-        agregar_error_estructural(
-            f"Paréntesis '{valor}' sin apertura",
-            linea,
-            pos,
-            contexto
-        )
-        self.errores_archivo.append(f"Línea {linea}: Paréntesis '{valor}' sin apertura")
-    
-    def _agregar_error_parentesis_desbalanceados(self, apertura, cierre, linea, pos, tokens):
-        contexto = " ".join([t[1] for t in tokens])
-        agregar_error_estructural(
-            f"Paréntesis desbalanceados: se abrió '{apertura}' pero se cerró '{cierre}'",
-            linea,
-            pos,
-            contexto
-        )
-        self.errores_archivo.append(f"Línea {linea}: Paréntesis desbalanceados")
-    
-    def _agregar_error_corchete_sin_apertura(self, valor, linea, pos, tokens):
-        contexto = " ".join([t[1] for t in tokens])
-        agregar_error_estructural(
-            f"Corchete '{valor}' sin apertura",
-            linea,
-            pos,
-            contexto
-        )
-        self.errores_archivo.append(f"Línea {linea}: Corchete '{valor}' sin apertura")
-    
-    def _agregar_error_corchetes_desbalanceados(self, apertura, cierre, linea, pos, tokens):
-        contexto = " ".join([t[1] for t in tokens])
-        agregar_error_estructural(
-            f"Corchetes desbalanceados: se abrió '{apertura}' pero se cerró '{cierre}'",
-            linea,
-            pos,
-            contexto
-        )
-        self.errores_archivo.append(f"Línea {linea}: Corchetes desbalanceados")
+        self.errores_archivo.append(f"Línea {linea}: {tipo} desbalanceados")
 
     def limpiar_tokens(self, tokens):
         tokens_limpios = []
@@ -216,15 +177,7 @@ class AnalizadorSintactico:
             return
         
         if ultimo_token[1] != ';':
-            if ultimo_token[1] not in ['{', '}']:
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron(
-                    f"Falta punto y coma al final de la sentencia",
-                    linea,
-                    len(contexto),
-                    contexto
-                )
-                self.errores_encontrados.append(f"Línea {linea}: Falta punto y coma")
+            pass
     
     def validar_estructura_sintactica(self, tokens, linea):
         if not tokens:
@@ -299,7 +252,7 @@ class AnalizadorSintactico:
             return
         
         nombre = tokens[1][1]
-        if not self.es_identificador_valido(nombre):
+        if not es_identificador_valido(nombre):
             contexto = " ".join([t[1] for t in tokens])
             agregar_error_patron(
                 f"Nombre de función inválido: '{nombre}'",
@@ -350,11 +303,6 @@ class AnalizadorSintactico:
                 contexto
             )
             self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura")
-        
-        if (self.es_identificador_valido(nombre) and tiene_parentesis_a and 
-            tiene_parentesis_c and tiene_llave_a):
-            from symbol_table import TablaSimbolos, TipoSimbolo
-            pass
     
     def validar_operadores(self, tokens, linea):
         for i, token in enumerate(tokens):
@@ -382,12 +330,11 @@ class AnalizadorSintactico:
                 self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' no existe en Go")
     
     def validar_keywords(self, tokens, linea):
-        keywords_go = {'package', 'import', 'func', 'var', 'const', 'if', 'else', 'for', 'break', 'continue', 'return', 'struct', 'interface', 'type', 'map', 'range', 'chan', 'select', 'defer', 'go'}
-        
+        from utils import es_palabra_reservada
         for i, token in enumerate(tokens):
             valor = token[1]
             
-            if valor in keywords_go and i > 0:
+            if es_palabra_reservada(valor) and i > 0:
                 anterior = tokens[i-1][1]
                 if anterior in ['var', 'func', 'type', 'struct']:
                     continue
@@ -402,22 +349,6 @@ class AnalizadorSintactico:
                         contexto
                     )
                     self.errores_encontrados.append(f"Línea {linea}: Keyword '{valor}' usado como identificador")
-    
-    def es_identificador_valido(self, nombre):
-        if not nombre:
-            return False
-        
-        if nombre[0].isdigit():
-            return False
-        
-        if not all(c.isalnum() or c == '_' for c in nombre):
-            return False
-        
-        keywords_go = {'package', 'import', 'func', 'var', 'const', 'if', 'else', 'for', 'break', 'continue', 'return', 'struct', 'interface', 'type', 'map', 'range', 'chan', 'select', 'defer', 'go', 'int', 'string', 'float', 'bool', 'true', 'false', 'nil'}
-        if nombre in keywords_go:
-            return False
-        
-        return True
     
     def obtener_errores(self):
         return self.errores_encontrados
@@ -460,58 +391,33 @@ class AnalizadorSintactico:
     def _parsear_expresion_simple(self, valores):
         if not valores:
             return None
-        
-        i = 0
-        while i < len(valores):
-            if valores[i] in ['*', '/', '×']:
-                if i > 0 and i < len(valores) - 1:
-                    if isinstance(valores[i-1], str):
-                        if valores[i-1].replace('.', '', 1).isdigit():
-                            izquierdo = Numero(valores[i-1])
+            
+        for operadores in [['*', '/', '×'], ['+', '-']]:
+            i = 0
+            while i < len(valores):
+                if valores[i] in operadores:
+                    if i > 0 and i < len(valores) - 1:
+                        if isinstance(valores[i-1], str):
+                            if valores[i-1].replace('.', '', 1).isdigit():
+                                izquierdo = Numero(valores[i-1])
+                            else:
+                                izquierdo = Variable(valores[i-1])
                         else:
-                            izquierdo = Variable(valores[i-1])
-                    else:
-                        izquierdo = valores[i-1]
-                    
-                    if isinstance(valores[i+1], str):
-                        if valores[i+1].replace('.', '', 1).isdigit():
-                            derecho = Numero(valores[i+1])
+                            izquierdo = valores[i-1]
+                        
+                        if isinstance(valores[i+1], str):
+                            if valores[i+1].replace('.', '', 1).isdigit():
+                                derecho = Numero(valores[i+1])
+                            else:
+                                derecho = Variable(valores[i+1])
                         else:
-                            derecho = Variable(valores[i+1])
-                    else:
-                        derecho = valores[i+1]
-                    
-                    operacion = OperacionBinaria(valores[i], izquierdo, derecho)
-                    
-                    valores[i-1:i+2] = [operacion]
-                    i -= 1
-            i += 1
-        
-        i = 0
-        while i < len(valores):
-            if valores[i] in ['+', '-']:
-                if i > 0 and i < len(valores) - 1:
-                    if isinstance(valores[i-1], str):
-                        if valores[i-1].replace('.', '', 1).isdigit():
-                            izquierdo = Numero(valores[i-1])
-                        else:
-                            izquierdo = Variable(valores[i-1])
-                    else:
-                        izquierdo = valores[i-1]
-                    
-                    if isinstance(valores[i+1], str):
-                        if valores[i+1].replace('.', '', 1).isdigit():
-                            derecho = Numero(valores[i+1])
-                        else:
-                            derecho = Variable(valores[i+1])
-                    else:
-                        derecho = valores[i+1]
-                    
-                    operacion = OperacionBinaria(valores[i], izquierdo, derecho)
-                    
-                    valores[i-1:i+2] = [operacion]
-                    i -= 1
-            i += 1
+                            derecho = valores[i+1]
+                        
+                        operacion = OperacionBinaria(valores[i], izquierdo, derecho)
+                        
+                        valores[i-1:i+2] = [operacion]
+                        i -= 1
+                i += 1
         
         return valores[0] if valores else None
     
@@ -531,10 +437,6 @@ class AnalizadorSintactico:
                 resultado += self._formatear_arbol(nodo.hijos[1], nivel + 1, "└── ")
         elif nodo.tipo == "Variable":
             resultado += f"{indentacion}{prefijo}Variable: {nodo.valor}\n"
-        elif nodo.tipo == "Parentesis":
-            resultado += f"{indentacion}{prefijo}Parentesis\n"
-            if nodo.hijos:
-                resultado += self._formatear_arbol(nodo.hijos[0], nivel + 1, "└── ")
         else:
             resultado += f"{indentacion}{prefijo}{nodo.tipo}"
             if nodo.valor:

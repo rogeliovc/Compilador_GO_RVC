@@ -1,5 +1,6 @@
 import re
 from errors import agregar_error_lexico
+from utils import es_identificador_valido, KEYWORDS_GO, TIPOS_BASICOS
 
 class AnalizadorLexico:
     def __init__(self):
@@ -27,10 +28,6 @@ class AnalizadorLexico:
         
         self.patron = r'===|!==|<=|>=|&&|\|\||<<|>>|&\^|<-|\.\.\.|:=|\+\=|-\=|\*\=|/\=|%\=|&\=|\|\=|\^\=|&\^\=|<<=|>>=|\+\+|--|[%&*+\-/<>=!|:.,;{}()\[\]\'"`]|[a-zA-Z_][\w.]*|\d+\.\d+|\d+'
 
-    def es_identificador_valido(self, token):
-        if not token: return False
-        return token[0].isalpha() or token[0] == '_'
-
     def procesar(self, entrada, linea=1):
         partes_de_la_expresion = re.findall(self.patron, entrada)
         resultado = []
@@ -54,7 +51,9 @@ class AnalizadorLexico:
                 tipo = self.tokens_fijos[l]
             elif l.replace('.', '', 1).isdigit():
                 tipo = "TKN NUM"
-            elif self.es_identificador_valido(l):
+            elif l in KEYWORDS_GO or l in TIPOS_BASICOS:
+                tipo = "TKN ID"
+            elif es_identificador_valido(l):
                 tipo = "TKN ID"
             else:
                 tipo = "TKN ERROR"

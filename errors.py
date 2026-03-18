@@ -170,12 +170,7 @@ class ErrorManager:
     def exportar_errores(self, formato="texto"):
         if formato == "texto":
             return self._exportar_texto()
-        elif formato == "json":
-            return self._exportar_json()
-        elif formato == "csv":
-            return self._exportar_csv()
-        else:
-            raise ValueError(f"Formato no soportado: {formato}")
+        raise ValueError(f"Formato no soportado: {formato}")
     
     def _exportar_texto(self):
         resultado = []
@@ -205,44 +200,7 @@ class ErrorManager:
                 resultado.append("")
         
         return "\n".join(resultado)
-    
-    def _exportar_json(self):
-        import json
-        datos = {
-            'resumen': self.obtener_resumen(),
-            'errores_sintacticos': self.errores_sintacticos,
-            'errores_semanticos': self.errores_semanticos
-        }
-        return json.dumps(datos, indent=2, ensure_ascii=False)
-    
-    def _exportar_csv(self):
-        import csv
-        import io
-        
-        output = io.StringIO()
-        writer = csv.writer(output)
-        
-        # Encabezado
-        writer.writerow(['Tipo', 'Categoría', 'Línea', 'Columna', 'Mensaje', 'Contexto'])
-        
-        # Errores sintácticos
-        for cat, errores in self.errores_sintacticos.items():
-            for error in errores:
-                writer.writerow([
-                    'Sintáctico', cat, error['linea'], error['columna'],
-                    error['mensaje'], error['contexto']
-                ])
-        
-        # Errores semánticos
-        for cat, errores in self.errores_semanticos.items():
-            for error in errores:
-                writer.writerow([
-                    'Semántico', cat, error['linea'], error['columna'],
-                    error['mensaje'], error['contexto']
-                ])
-        
-        return output.getvalue()
-    
+
     def _get_timestamp(self):
         from datetime import datetime
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")

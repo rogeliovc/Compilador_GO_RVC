@@ -33,14 +33,3 @@ class OperacionBinaria(NodoAST):
 class Variable(NodoAST):
     def __init__(self, nombre):
         super().__init__("Variable", nombre)
-
-class Asignacion(NodoAST):
-    def __init__(self, variable, expresion):
-        super().__init__("Asignacion", "=")
-        self.agregar_hijo(variable)
-        self.agregar_hijo(expresion)
-
-class ExpresionParentesis(NodoAST):
-    def __init__(self, expresion):
-        super().__init__("Parentesis", "()")
-        self.agregar_hijo(expresion)
