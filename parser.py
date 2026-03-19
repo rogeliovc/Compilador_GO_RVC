@@ -132,6 +132,10 @@ class AnalizadorSintactico:
         
         self.validar_sintaxis_funcion(tokens, linea_num)
         
+        self.validar_sintaxis_if(tokens, linea_num)
+        
+        self.validar_sintaxis_for(tokens, linea_num)
+        
         self.validar_operadores(tokens, linea_num)
         
         self.validar_keywords(tokens, linea_num)
@@ -304,6 +308,95 @@ class AnalizadorSintactico:
             )
             self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura")
     
+    def validar_sintaxis_if(self, tokens, linea):
+        if not tokens: return
+        
+        if tokens[0][1].lower() == 'if':
+            if len(tokens) < 3:
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron("Estructura if incompleta", linea, 0, contexto)
+                self.errores_encontrados.append(f"Línea {linea}: Estructura if incompleta")
+                return
+
+            # En Go, los paréntesis son opcionales en el 'if'.
+            
+            if tokens[-1][1] != '{':
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron("Falta llave de apertura '{' al final del if", linea, len(tokens)-1, contexto)
+                self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura en if")
+                
+            # Validación profunda de operaciones matemáticas y conjunciones mediante AST
+            cond_tokens = tokens[1:-1]
+            if any(t[1] == ';' for t in cond_tokens):
+                idx = next(i for i, t in enumerate(cond_tokens) if t[1] == ';')
+                cond_tokens = cond_tokens[idx+1:]
+            
+            if cond_tokens:
+                try:
+                    from ast_nodes import ParserExpresiones
+                    parser_expr = ParserExpresiones(cond_tokens)
+                    parser_expr.parse()
+                except SyntaxError as e:
+                    msg = f"Error de sintaxis en expresión de 'if' -> {str(e)}"
+                    from errors import agregar_error_patron
+                    agregar_error_patron(msg, linea, 0, " ".join([t[1] for t in tokens]))
+                    self.errores_encontrados.append(f"Línea {linea}: {msg}")
+                
+            for i, t in enumerate(tokens):
+                if t[1] == '=' and t[0] == 'TKN ASIGN':
+                    contexto = " ".join([t[1] for t in tokens])
+                    agregar_error_patron("Se usó un operador de asignación '=' en lugar de operador relacional en el if", linea, i, contexto)
+                    self.errores_encontrados.append(f"Línea {linea}: Asignación en condición de if")
+    
+    def validar_sintaxis_for(self, tokens, linea):
+        if not tokens: return
+        
+        if tokens[0][1].lower() == 'for':
+            if len(tokens) < 2:
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron("Estructura for incompleta", linea, 0, contexto)
+                self.errores_encontrados.append(f"Línea {linea}: Estructura for incompleta")
+                return
+
+            if tokens[-1][1] != '{':
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron("Falta llave de apertura '{' al final del for", linea, len(tokens)-1, contexto)
+                self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura en for")
+            
+            num_espacios = sum(1 for t in tokens if t[1] == ';')
+            # In Go, a for loop can have 0 or exactly 2 semicolons
+            if num_espacios not in [0, 2]:
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron("Estructura for inválida: se esperan 0 o 2 puntos y comas ';'", linea, 0, contexto)
+                self.errores_encontrados.append(f"Línea {linea}: Estructura for inválida (cantidad de ';')")
+            else:
+                # Construccion y validación del AST
+                try:
+                    from ast_nodes import ParserExpresiones
+                    if num_espacios == 2:
+                        partes = []
+                        actual = []
+                        for t in tokens[1:-1]:
+                            if t[1] == ';':
+                                partes.append(actual)
+                                actual = []
+                            else:
+                                actual.append(t)
+                        partes.append(actual)
+                        cond_tokens = partes[1]
+                    else:
+                        cond_tokens = tokens[1:-1]
+                        
+                    if cond_tokens:
+                        if not any(t[1] == 'range' for t in cond_tokens):
+                            parser_expr = ParserExpresiones(cond_tokens)
+                            parser_expr.parse()
+                except SyntaxError as e:
+                    msg = f"Error de sintaxis en expresión de 'for' -> {str(e)}"
+                    from errors import agregar_error_patron
+                    agregar_error_patron(msg, linea, 0, " ".join([t[1] for t in tokens]))
+                    self.errores_encontrados.append(f"Línea {linea}: {msg}")
+    
     def validar_operadores(self, tokens, linea):
         for i, token in enumerate(tokens):
             valor = token[1]
@@ -320,14 +413,8 @@ class AnalizadorSintactico:
                     self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
             
             elif valor in ['++', '--']:
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron(
-                    f"Operador '{valor}' no existe en Go",
-                    linea,
-                    i,
-                    contexto
-                )
-                self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' no existe en Go")
+                # En Go, ++ y -- sí que existen como statements. Los permitimos.
+                pass
     
     def validar_keywords(self, tokens, linea):
         from utils import es_palabra_reservada
@@ -336,9 +423,11 @@ class AnalizadorSintactico:
             
             if es_palabra_reservada(valor) and i > 0:
                 anterior = tokens[i-1][1]
-                if anterior in ['var', 'func', 'type', 'struct']:
+                if anterior in ['var', 'func', 'type', 'struct', '=', ':=', ',', '(', '{']:
                     continue
                 elif anterior == '.':
+                    continue
+                elif valor in ['range', 'true', 'false', 'nil', 'iota']:
                     continue
                 else:
                     contexto = " ".join([t[1] for t in tokens])
@@ -459,7 +548,11 @@ class AnalizadorSintactico:
         
         for i, linea in enumerate(lineas, 1):
             if linea.strip():
-                tokens = lexer.procesar(linea.strip(), i)
+                tokens_raw = lexer.procesar(linea.strip(), i)
+                tokens = self.limpiar_tokens(tokens_raw)
+                
+                if not tokens:
+                    continue
                 
                 errores_anteriores = len(errores_totales)
                 self.validar_sintaxis_go(tokens, i, omitir_balance_simbolos=True)

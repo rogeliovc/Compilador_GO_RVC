@@ -125,6 +125,35 @@ class TablaSimbolos:
     def validar_patron_declaracion(self, tokens: List[tuple]) -> tuple[bool, str, Optional[Simbolo]]:
         if len(tokens) < 1:
             return False, "Línea vacía", None
+            
+        # Patrón If
+        if any(t[1].lower() == 'if' for t in tokens):
+            if tokens[0][1].lower() != 'if':
+                tiene_comillas = any(t[0] in ['TKN_STRING', 'TKN COMILLA', 'TKN COMILLA_SIMPLE'] for t in tokens)
+                if not tiene_comillas:
+                    return False, "ERROR SEMÁNTICO: Orden incorrecto, 'if' mal posicionado", None
+            
+            if any(t[0] == 'TKN ASIGN' and t[1] == '=' for t in tokens):
+                return False, "ERROR SINTÁCTICO/SEMÁNTICO: Uso de asignación en lugar de operador relacional en 'if'", None
+                
+            primer_token = 2 if len(tokens) > 1 and tokens[1][0] == 'TKN PAREN_A' else 1
+            if len(tokens) > primer_token and tokens[primer_token][0] in ['TKN EQ', 'TKN NEQ', 'TKN LT', 'TKN GT', 'TKN LTE', 'TKN GTE']:
+                return False, "ERROR SEMÁNTICO: Orden incorrecto, se encontró operador antes de variable en 'if'", None
+                
+            return True, "Estructura de control 'if' analizada", None
+        
+        # Patrón For
+        if any(t[1].lower() == 'for' for t in tokens):
+            if tokens[0][1].lower() != 'for':
+                tiene_comillas = any('COMILLA' in t[0] for t in tokens)
+                if not tiene_comillas:
+                    return False, "ERROR SEMÁNTICO: Orden incorrecto, 'for' mal posicionado", None
+            
+            semicolons = sum(1 for t in tokens if t[1] == ';')
+            if semicolons not in [0, 2]:
+                return False, "ERROR SINTÁCTICO/SEMÁNTICO: Bucle 'for' con formato incorrecto (solo 0 o 2 puntos y comas permitidos)", None
+                
+            return True, "Estructura de control 'for' analizada", None
         
         # Patrón 0: Ignorar líneas que no son declaraciones
         # Llamadas a funciones: nombre.funcion(parametros)
@@ -353,13 +382,6 @@ class TablaSimbolos:
                 break
         
         if not all([tipo_dato, nombre_var]):
-            # Error de patrón inválido
-            agregar_error_patron(
-                "No es una declaración válida: falta tipo o nombre",
-                0,  # línea se debería pasar como parámetro
-                0,
-                " ".join([token[1] for token in tokens])
-            )
             return False, "No es una declaración válida", None
         
         simbolo = Simbolo(nombre_var, TipoSimbolo.VARIABLE, tipo_dato, 0, self.ambito_actual)

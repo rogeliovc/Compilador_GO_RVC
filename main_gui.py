@@ -388,6 +388,9 @@ class CodeEditor:
         for i, linea in enumerate(lineas, 1):
             if linea.strip() and not linea.strip().startswith('//'):
                 tokens = self.lexer.procesar(linea, i)
+                tokens = self.parser.limpiar_tokens(tokens)
+                if not tokens:
+                    continue
                 if not self.parser.validar_sintaxis_go(tokens, i, omitir_balance_simbolos=True):
                     es_sintaxis_valida = False
                 self.parser.procesar_linea_archivo(tokens, i)
@@ -412,6 +415,10 @@ class CodeEditor:
                 continue
             
             tokens = self.lexer.procesar(linea, i)
+            tokens = self.parser.limpiar_tokens(tokens)
+            if not tokens:
+                continue
+                
             es_valido, mensaje, simbolo = self.semantic.validar_declaracion(tokens)
             
             if es_valido:
@@ -641,6 +648,10 @@ class CodeEditor:
                 continue
                 
             tokens = self.lexer.procesar(linea)
+            tokens = self.parser.limpiar_tokens(tokens)
+            if not tokens:
+                continue
+                
             es_valido, mensaje, simbolo = self.semantic.validar_declaracion(tokens)
             
             if es_valido:

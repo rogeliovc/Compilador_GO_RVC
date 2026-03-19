@@ -23,10 +23,10 @@ class AnalizadorLexico:
             '+=': 'TKN ADDEQ', '-=': 'TKN SUBEQ', '*=': 'TKN MULTEQ', '/=': 'TKN DIVEQ', '%=': 'TKN MODEQ',
             '&=': 'TKN ANDEQ', '|=': 'TKN OREQ', '^=': 'TKN XOREQ', '&^=': 'TKN ANDNOTEQ',
             '<<=': 'TKN LSHIFTEQ', '>>=': 'TKN RSHIFTEQ',
+            '\\': 'TKN ESCAPE',
             '++': 'TKN INC', '--': 'TKN DEC'
         }
-        
-        self.patron = r'===|!==|<=|>=|&&|\|\||<<|>>|&\^|<-|\.\.\.|:=|\+\=|-\=|\*\=|/\=|%\=|&\=|\|\=|\^\=|&\^\=|<<=|>>=|\+\+|--|[%&*+\-/<>=!|:.,;{}()\[\]\'"`]|[a-zA-Z_][\w.]*|\d+\.\d+|\d+'
+        self.patron = r'===|!==|==|!=|<=|>=|&&|\|\||<<|>>|&\^|<-|\.\.\.|:=|\+\=|-\=|\*\=|/\=|%\=|&\=|\|\=|\^\=|&\^\=|<<=|>>=|\+\+|--|"(?:\\.|[^"\\])*"|`[^`]*`|[a-zA-Z_áéíóúÁÉÍÓÚñÑ][\w.áéíóúÁÉÍÓÚñÑ]*|\d+\.\d+|\d+|[%&*+\-/<>=!|:.,;{}()\[\]\'"`\\]'
 
     def procesar(self, entrada, linea=1):
         partes_de_la_expresion = re.findall(self.patron, entrada)
@@ -51,6 +51,8 @@ class AnalizadorLexico:
                 tipo = self.tokens_fijos[l]
             elif l.replace('.', '', 1).isdigit():
                 tipo = "TKN NUM"
+            elif (l.startswith('"') and l.endswith('"')) or (l.startswith('`') and l.endswith('`')):
+                tipo = "TKN_STRING"
             elif l in KEYWORDS_GO or l in TIPOS_BASICOS:
                 tipo = "TKN ID"
             elif es_identificador_valido(l):

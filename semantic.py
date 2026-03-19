@@ -18,6 +18,29 @@ class AutomataSemantico:
         
         errores = []
         
+        if any(t[1].lower() == 'if' for t in tokens):
+            # Solo verificar sintaxis semanticamente si empieza por if, de lo contrario podría ser un string o similar.
+            if tokens[0][1].lower() == 'if':
+                primer_token = 2 if len(tokens) > 1 and tokens[1][0] == 'TKN PAREN_A' else 1
+                if len(tokens) > primer_token and tokens[primer_token][0] in ['TKN EQ', 'TKN NEQ', 'TKN LT', 'TKN GT', 'TKN LTE', 'TKN GTE']:
+                    errores.append(f"Línea {linea}: SEMÁNTICA - Orden incorrecto, operador antes de variable en 'if'")
+            else:
+                # Comprobar si hay alguna palabra if suelta que deba estar al inicio
+                # Pero ignoramos si hay comillas en los tokens porque podría ser un string
+                tiene_comillas = any('COMILLA' in t[0] for t in tokens)
+                if not tiene_comillas:
+                    errores.append(f"Línea {linea}: SEMÁNTICA - El bloque 'if' presenta un orden incorrecto")
+        
+        if any(t[1].lower() == 'for' for t in tokens):
+            if tokens[0][1].lower() == 'for':
+                semicolons = sum(1 for t in tokens if t[1] == ';')
+                if semicolons not in [0, 2]:
+                    errores.append(f"Línea {linea}: SEMÁNTICA - Bucle 'for' con formato incorrecto (solo 0 o 2 puntos y comas permitidos)")
+            else:
+                tiene_comillas = any('COMILLA' in t[0] for t in tokens)
+                if not tiene_comillas:
+                    errores.append(f"Línea {linea}: SEMÁNTICA - El bloque 'for' presenta un orden incorrecto")
+        
         if tokens[0][1] == 'var':
             if len(tokens) < 3:
                 errores.append(f"Línea {linea}: Declaración var incompleta")
