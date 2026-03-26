@@ -1,3 +1,5 @@
+from typing import List
+
 class ErrorManager:
     def __init__(self):
         self.errores_sintacticos = {
@@ -33,8 +35,8 @@ class ErrorManager:
         
         if categoria in self.errores_sintacticos:
             self.errores_sintacticos[categoria].append(error)
-            self.contador_errores['sintacticos'] += 1
-            self.contador_errores['total'] += 1
+            self.contador_errores['sintacticos'] = int(self.contador_errores['sintacticos']) + 1
+            self.contador_errores['total'] = int(self.contador_errores['total']) + 1
         else:
             raise ValueError(f"Categoría sintáctica inválida: {categoria}")
     
@@ -60,6 +62,7 @@ class ErrorManager:
     def limpiar_errores(self):
         for categoria in self.errores_sintacticos:
             self.errores_sintacticos[categoria] = []
+
         
         for categoria in self.errores_semanticos:
             self.errores_semanticos[categoria] = []
@@ -173,30 +176,48 @@ class ErrorManager:
         raise ValueError(f"Formato no soportado: {formato}")
     
     def _exportar_texto(self):
-        resultado = []
+        resultado: List[str] = []
         resultado.append("REPORTE DE ERRORES - COMPILADOR MINI-GO")
         resultado.append("=" * 50)
         
         resumen = self.obtener_resumen()
-        resultado.append(f"Total errores: {resumen['total_errores']}")
-        resultado.append(f"Sintácticos: {resumen['total_sintacticos']}")
-        resultado.append(f"Semánticos: {resumen['total_semanticos']}")
+        assert isinstance(resumen, dict)
+        
+        total_err = str(resumen.get('total_errores', 0))
+        sintacticos_err = str(resumen.get('total_sintacticos', 0))
+        semanticos_err = str(resumen.get('total_semanticos', 0))
+        
+        resultado.append(f"Total errores: {total_err}")
+        resultado.append(f"Sintácticos: {sintacticos_err}")
+        resultado.append(f"Semánticos: {semanticos_err}")
         resultado.append("")
         
         # Errores sintácticos
-        for cat, errores in self.errores_sintacticos.items():
-            if errores:
-                resultado.append(f"ERRORES SINTÁCTICOS - {cat.upper()}:")
-                for error in errores:
-                    resultado.append(f"  Línea {error['linea']}: {error['mensaje']}")
+        for categoria_nombre, errores_lista in self.errores_sintacticos.items():
+            assert isinstance(categoria_nombre, str)
+            assert isinstance(errores_lista, list)
+            
+            if errores_lista:
+                resultado.append(f"ERRORES SINTÁCTICOS - {categoria_nombre.upper()}:")
+                for e_dict in errores_lista:
+                    assert isinstance(e_dict, dict)
+                    l_num = str(e_dict.get('linea', 0))
+                    m_text = str(e_dict.get('mensaje', ''))
+                    resultado.append(f"  Línea {l_num}: {m_text}")
                 resultado.append("")
         
         # Errores semánticos
-        for cat, errores in self.errores_semanticos.items():
-            if errores:
-                resultado.append(f"ERRORES SEMÁNTICOS - {cat.upper()}:")
-                for error in errores:
-                    resultado.append(f"  Línea {error['linea']}: {error['mensaje']}")
+        for categoria_nombre, errores_lista in self.errores_semanticos.items():
+            assert isinstance(categoria_nombre, str)
+            assert isinstance(errores_lista, list)
+            
+            if errores_lista:
+                resultado.append(f"ERRORES SEMÁNTICOS - {categoria_nombre.upper()}:")
+                for e_dict in errores_lista:
+                    assert isinstance(e_dict, dict)
+                    l_num = str(e_dict.get('linea', 0))
+                    m_text = str(e_dict.get('mensaje', ''))
+                    resultado.append(f"  Línea {l_num}: {m_text}")
                 resultado.append("")
         
         return "\n".join(resultado)
@@ -205,10 +226,8 @@ class ErrorManager:
         from datetime import datetime
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# Instancia global del manejador de errores
 error_manager = ErrorManager()
 
-# Funciones de conveniencia para uso fácil
 def agregar_error_lexico(mensaje, linea=0, columna=0, contexto=""):
     error_manager.agregar_error_sintactico('lexicos', mensaje, linea, columna, contexto)
 

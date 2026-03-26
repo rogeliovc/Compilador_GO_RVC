@@ -51,7 +51,6 @@ class CodeEditor:
         
         self.text_area.config(yscrollcommand=self.on_textscroll)
         
-        # Área de texto para resultados
         self.results_text = tk.Text(self.results_frame, wrap=tk.WORD, font=('Consolas', 10),
                                    background='#2b2b2b', foreground='#00ff00',
                                    padx=5, pady=5, height=8)
@@ -140,11 +139,12 @@ class CodeEditor:
         self.line_numbers.config(state='normal')
         self.line_numbers.delete(1.0, tk.END)
         
-        content = self.text_area.get(1.0, tk.END)
-        if content:
-            if content.endswith('\n'):
-                content = content[:-1]
-            line_count = content.count('\n') + 1
+        texto_editor = str(self.text_area.get(1.0, tk.END))
+        
+        if texto_editor:
+            if texto_editor.endswith('\n'):
+                texto_editor = texto_editor[:len(texto_editor)-1]
+            line_count = texto_editor.count('\n') + 1
         else:
             line_count = 1
         
@@ -189,7 +189,7 @@ class CodeEditor:
             self.update_line_numbers()
             self.update_status()
             self.highlight_syntax()
-            return "break" # Detener el salto nativo extra de tk.Text
+            return "break"
     
     def validar_en_tiempo_real(self):
         linea_actual = self.text_area.get("insert linestart", "insert lineend").strip()
@@ -206,9 +206,10 @@ class CodeEditor:
         self.update_line_numbers()
     
     def update_status(self):
-        content = self.text_area.get(1.0, tk.END)
-        char_count = len(content) - 1
-        line_count = content.count('\n')
+        texto_editor = str(self.text_area.get(1.0, tk.END))
+        
+        char_count = len(texto_editor) - 1
+        line_count = texto_editor.count('\n')
         status_text = f"Caracteres: {char_count} | Líneas: {line_count}"
         self.status_label.config(text=status_text)
     
@@ -282,7 +283,6 @@ class CodeEditor:
         self.current_file = None
         self.root.title("Nuevo archivo - Compilador Mini-Go")
         
-        # Limpiar variables y tabla de símbolos
         self.semantic.variables_encontradas.clear()
         self.semantic.tabla_simbolos = TablaSimbolos()
         limpiar_errores()
@@ -304,10 +304,9 @@ class CodeEditor:
                 self.root.title(f"{file_path} - Compilador Mini-Go")
                 self.highlight_syntax()
                 
-                # Limpiar variables y tabla de símbolos al abrir nuevo archivo
                 self.semantic.variables_encontradas.clear()
                 self.semantic.tabla_simbolos = TablaSimbolos()
-                limpiar_errores()  # Limpiar errores del sistema
+                limpiar_errores() 
                 
                 self.update_line_numbers()
                 self.update_file_info()
@@ -353,14 +352,11 @@ class CodeEditor:
             self.results_text.insert(tk.END, "No hay código para compilar.\n")
             return
         
-        # Limpiar errores anteriores
         limpiar_errores()
         
-        # Limpiar tabla de símbolos pero mantener tipos básicos
         self.semantic.variables_encontradas.clear()
         self.semantic.tabla_simbolos = TablaSimbolos()
         
-        # Limpiar historial de llaves/corchetes del analizador sintáctico
         self.parser = AnalizadorSintactico()
         
         self.results_text.delete(1.0, tk.END)
@@ -378,7 +374,6 @@ class CodeEditor:
                 tokens_linea = self.lexer.procesar(linea, i)
                 tokens_totales.extend(tokens_linea)
         
-        # Mostrar resumen del análisis léxico
         self.results_text.insert(tk.END, f"  > Total de tokens identificados: {len(tokens_totales)}\n")
         
         # 2. Análisis sintáctico estructural
@@ -406,9 +401,13 @@ class CodeEditor:
         # 3. Análisis semántico completo
         self.results_text.insert(tk.END, "\n[Fase 3] Análisis Semántico (Declaraciones)\n")
         
-        declaraciones_validas = 0
-        declaraciones_invalidas = 0
-        lineas_ignoradas = 0
+        declaraciones_validas: int = 0
+        declaraciones_invalidas: int = 0
+        lineas_ignoradas: int = 0
+        
+        assert isinstance(declaraciones_validas, int)
+        assert isinstance(declaraciones_invalidas, int)
+        assert isinstance(lineas_ignoradas, int)
         
         for i, linea in enumerate(lineas, 1):
             if not linea.strip() or linea.strip().startswith('//'):
@@ -423,13 +422,17 @@ class CodeEditor:
             
             if es_valido:
                 self.results_text.insert(tk.END, f"  [PASS] Línea {i}: {mensaje}\n")
-                declaraciones_validas += 1
+                declaraciones_validas = int(declaraciones_validas) + 1
             elif 'no es declaración' in mensaje.lower() or 'llamada a función' in mensaje.lower() or 'estructura de control' in mensaje.lower():
                 self.results_text.insert(tk.END, f"  [INFO] Línea {i}: {mensaje}\n")
-                lineas_ignoradas += 1
+                lineas_ignoradas = int(lineas_ignoradas) + 1
             else:
                 self.results_text.insert(tk.END, f"  [FAIL] Línea {i}: {mensaje}\n")
-                declaraciones_invalidas += 1
+                declaraciones_invalidas = int(declaraciones_invalidas) + 1
+            
+            assert isinstance(declaraciones_validas, int)
+            assert isinstance(declaraciones_invalidas, int)
+            assert isinstance(lineas_ignoradas, int)
         
         # 4. Resumen del análisis
         self.results_text.insert(tk.END, f"\n[Reporte de Validación]\n")
@@ -459,24 +462,45 @@ class CodeEditor:
         # 6. Estado de la tabla de símbolos
         self.results_text.insert(tk.END, f"\n[Tabla de Símbolos]\n")
         
-        # Contar símbolos por tipo
-        variables = 0
-        funciones = 0
-        structs = 0
-        imports = 0
+        variables: int = 0
+        funciones: int = 0
+        structs: int = 0
+        imports: int = 0
+        
+        assert isinstance(variables, int)
+        assert isinstance(funciones, int)
+        assert isinstance(structs, int)
+        assert isinstance(imports, int)
+        
+        sintacticos: int = 0
+        semanticos: int = 0
+        
+        assert isinstance(sintacticos, int)
+        assert isinstance(semanticos, int)
+        assert isinstance(semanticos, int)
+        
+        assert isinstance(variables, int)
+        assert isinstance(funciones, int)
+        assert isinstance(structs, int)
+        assert isinstance(imports, int)
         
         for nombre, simbolos_lista in self.semantic.tabla_simbolos.simbolos.items():
             for simbolo in simbolos_lista:
                 if simbolo.tipo_simbolo.value == 'variable':
-                    variables += 1
+                    variables = int(variables) + 1
                 elif simbolo.tipo_simbolo.value == 'funcion':
-                    funciones += 1
+                    funciones = int(funciones) + 1
                 elif simbolo.tipo_simbolo.value == 'tipo_dato' and simbolo.tipo_dato == 'struct':
-                    structs += 1
+                    structs = int(structs) + 1
                 elif 'pkg_' in nombre:
-                    imports += 1
+                    imports = int(imports) + 1
                 elif simbolo.tipo_dato == 'import':
-                    imports += 1
+                    imports = int(imports) + 1
+                
+                assert isinstance(variables, int)
+                assert isinstance(funciones, int)
+                assert isinstance(structs, int)
+                assert isinstance(imports, int)
         
         self.results_text.insert(tk.END, f"  Registros Totales: {len(self.semantic.tabla_simbolos.simbolos)}\n")
         self.results_text.insert(tk.END, f"  Formatos: ({variables} Vars, {funciones} Funcs, {structs} Structs, {imports} PKGs)\n")
@@ -538,29 +562,24 @@ class CodeEditor:
             self.results_text.insert(tk.END, "No hay código para validar.\n")
             return
         
-        # Limpiar errores anteriores
         limpiar_errores()
         
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, " VALIDACIÓN SINTÁCTICA\n")
         self.results_text.insert(tk.END, "=" * 60 + "\n\n")
         
-        # Usar análisis de archivo completo
         es_valido = self.parser.validar_archivo_completo(codigo)
         
-        # Obtener todos los errores
         errores = self.parser.obtener_errores()
         
-        # Mostrar resultados
         if es_valido and len(errores) == 0:
-            self.results_text.insert(tk.END, "✅ ¡Código perfecto! No se encontraron errores sintácticos.\n")
-            self.results_text.insert(tk.END, "✅ Estructura de bloques correcta (llaves balanceadas).\n")
-            self.status_label.config(text="✅ Sintaxis válida (compilador real)")
+            self.results_text.insert(tk.END, "No se encontraron errores sintácticos.\n")
+            self.results_text.insert(tk.END, "Estructura de bloques correcta (llaves balanceadas).\n")
+            self.status_label.config(text="Sintaxis válida (compilador real)")
         else:
-            self.results_text.insert(tk.END, f"❌ Se encontraron {len(errores)} errores sintácticos:\n\n")
+            self.results_text.insert(tk.END, f"Se encontraron {len(errores)} errores sintácticos:\n\n")
             
-            # Agrupar errores por línea para mejor visualización
-            errores_por_linea = {}
+            errores_por_linea: dict[int, list[str]] = {}
             for error in errores:
                 if ": " in error:
                     linea_str = error.split(":")[0].replace("Línea ", "")
@@ -572,32 +591,28 @@ class CodeEditor:
                     except ValueError:
                         continue
             
-            # Mostrar errores organizados por línea
             for linea_num in sorted(errores_por_linea.keys()):
-                # Encontrar la línea de código original
                 lineas_codigo = codigo.split('\n')
                 if 0 < linea_num <= len(lineas_codigo):
                     linea_codigo = lineas_codigo[linea_num - 1].strip()
                     self.results_text.insert(tk.END, f"Línea {linea_num}: {linea_codigo}\n")
                     
                     for error in errores_por_linea[linea_num]:
-                        self.results_text.insert(tk.END, f"  ⚠️  {error}\n")
+                        self.results_text.insert(tk.END, f" {error}\n")
                     self.results_text.insert(tk.END, "\n")
             
-            # Mostrar errores sin número de línea
             otros_errores = [e for e in errores if not (": " in e and "Línea " in e)]
             if otros_errores:
                 self.results_text.insert(tk.END, "Otros errores:\n")
                 for error in otros_errores:
-                    self.results_text.insert(tk.END, f"  ⚠️  {error}\n")
+                    self.results_text.insert(tk.END, f" {error}\n")
                 self.results_text.insert(tk.END, "\n")
             
-            self.status_label.config(text=f"❌ {len(errores)} errores sintácticos")
+            self.status_label.config(text=f" {len(errores)} errores sintácticos")
         
-        # Mostrar resumen del sistema de errores
         resumen_errores = obtener_resumen_errores()
         if resumen_errores['total_errores'] > 0:
-            self.results_text.insert(tk.END, "\n📊 RESUMEN DEL SISTEMA DE ERRORES:\n")
+            self.results_text.insert(tk.END, "\n RESUMEN DEL SISTEMA DE ERRORES:\n")
             self.results_text.insert(tk.END, f"Total: {resumen_errores['total_errores']}\n")
             self.results_text.insert(tk.END, f"Sintácticos: {resumen_errores['total_sintacticos']}\n")
             self.results_text.insert(tk.END, f"Semánticos: {resumen_errores['total_semanticos']}\n")
@@ -631,16 +646,19 @@ class CodeEditor:
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, "=== VALIDACIÓN DE DECLARACIONES GO ===\n\n")
         
-        # Limpiar solo variables de usuario, mantener tipos básicos
         self.semantic.variables_encontradas.clear()
-        # Recrear tabla para mantener solo tipos básicos y palabras reservadas
         from symbol_table import TablaSimbolos
         self.semantic.tabla_simbolos = TablaSimbolos()
         
         lineas = codigo.split('\n')
-        declaraciones_validas = 0
-        declaraciones_invalidas = 0
-        lineas_ignoradas = 0
+        declaraciones_validas: int = 0
+        declaraciones_invalidas: int = 0
+        lineas_ignoradas: int = 0
+        
+        # Help Pyre
+        assert isinstance(declaraciones_validas, int)
+        assert isinstance(declaraciones_invalidas, int)
+        assert isinstance(lineas_ignoradas, int)
         
         for linea in lineas:
             linea = linea.strip()
@@ -657,16 +675,19 @@ class CodeEditor:
             if es_valido:
                 self.results_text.insert(tk.END, f"✓ {linea}\n")
                 self.results_text.insert(tk.END, f"  {mensaje}\n")
-                declaraciones_validas += 1
+                declaraciones_validas = int(declaraciones_validas) + 1
             elif "no es declaración" in mensaje.lower() or "llamada a función" in mensaje.lower() or "estructura de control" in mensaje.lower() or "línea vacía" in mensaje.lower():
-                # Ignorar líneas que no son declaraciones
                 self.results_text.insert(tk.END, f"○ {linea}\n")
                 self.results_text.insert(tk.END, f"  {mensaje}\n")
-                lineas_ignoradas += 1
+                lineas_ignoradas = int(lineas_ignoradas) + 1
             else:
                 self.results_text.insert(tk.END, f"✗ {linea}\n")
                 self.results_text.insert(tk.END, f"  ERROR: {mensaje}\n")
-                declaraciones_invalidas += 1
+                declaraciones_invalidas = int(declaraciones_invalidas) + 1
+            
+            assert isinstance(declaraciones_validas, int)
+            assert isinstance(declaraciones_invalidas, int)
+            assert isinstance(lineas_ignoradas, int)
         
         self.results_text.insert(tk.END, f"\nResumen:\n")
         self.results_text.insert(tk.END, f"✓ Declaraciones válidas: {declaraciones_validas}\n")
@@ -692,21 +713,19 @@ class CodeEditor:
     def mostrar_errores_detallados(self):
         """Muestra reporte detallado de errores del sistema"""
         self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(tk.END, "🚨 REPORTE DETALLADO DE ERRORES\n")
+        self.results_text.insert(tk.END, "REPORTE DETALLADO DE ERRORES\n")
         self.results_text.insert(tk.END, "=" * 50 + "\n\n")
         
         resumen_errores = obtener_resumen_errores()
         
         if resumen_errores['total_errores'] == 0:
-            self.results_text.insert(tk.END, "✅ No hay errores registrados.\n")
+            self.results_text.insert(tk.END, "No hay errores registrados.\n")
         else:
-            # Mostrar resumen
-            self.results_text.insert(tk.END, f"📊 RESUMEN:\n")
+            self.results_text.insert(tk.END, f"RESUMEN:\n")
             self.results_text.insert(tk.END, f"Total de errores: {resumen_errores['total_errores']}\n")
             self.results_text.insert(tk.END, f"Sintácticos: {resumen_errores['total_sintacticos']}\n")
             self.results_text.insert(tk.END, f"Semánticos: {resumen_errores['total_semanticos']}\n\n")
             
-            # Mostrar errores detallados
             from errors import error_manager
             error_manager.imprimir_todos_errores()
         
@@ -716,7 +735,7 @@ class CodeEditor:
         """Limpia todos los errores del sistema"""
         limpiar_errores()
         self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(tk.END, "🧹 Errores del sistema limpiados.\n")
+        self.results_text.insert(tk.END, "Errores del sistema limpiados.\n")
         self.status_label.config(text="Errores limpiados")
     
 

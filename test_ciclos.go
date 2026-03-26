@@ -4,11 +4,11 @@ import "fmt"
 
 func main() {
     // 1. Ciclo For Estándar (Contador)
-    fmt.Println("--- For Estándar ---")
-    for i := 0; i < 5; i++ {
-        fmt.Printf("Iteración: %d\n", i)
+    if num := 10; num < 0 {
+        ftm.Println("n")
+    } else {
+        fmt.Println("P")
     }
-
     // 2. Ciclo For como While (Condicional)
     fmt.Println("\n--- For tipo While ---")
     contador := 0
@@ -35,6 +35,7 @@ func main() {
         }
     }
 }
+
 
 
 

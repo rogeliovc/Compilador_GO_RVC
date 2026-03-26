@@ -34,11 +34,16 @@ class Variable(NodoAST):
     def __init__(self, nombre):
         super().__init__("Variable", nombre)
 
+class AttributeAccess(NodoAST):
+    def __init__(self, base, attr):
+        super().__init__("AttributeAccess", attr)
+        self.agregar_hijo(base)
+
 class ParserExpresiones:
     def __init__(self, tokens):
         # Ignorar posibles espacios residuales o tokens no esenciales
         self.tokens = [t for t in tokens if t[1] not in [' ', '\n', '\t', ';', '{']]
-        self.pos = 0
+        self.pos: int = 0
 
     def peek(self):
         if self.pos < len(self.tokens):
@@ -70,7 +75,7 @@ class ParserExpresiones:
             operadores_validos = [
                 '+', '-', '*', '/', '%', 
                 '<', '>', '<=', '>=', '==', '!=', 
-                '&&', '||', '='
+                '&&', '||', '=', '.'
             ]
             if op[1] in operadores_validos:
                 self.pos += 1
@@ -104,12 +109,17 @@ class ParserExpresiones:
             self.pos += 1
             return NodoAST('Boolean', t[1])
             
-        # Variables or Function Calls
         if t[0] == 'TKN ID' or t[1].isidentifier():
             self.pos += 1
-            nodo = Variable(t[1])
             
-            # Verificación de llamadas a subfunción / casting
+            if '.' in t[1]:
+                parts = t[1].split('.')
+                nodo = Variable(parts[0])
+                for part in parts[1:]:
+                    nodo = AttributeAccess(nodo, part)
+            else:
+                nodo = Variable(t[1])
+            
             if self.match('('):
                 nodo_llamada = NodoAST('LlamadaFuncion', t[1])
                 while self.peek() and self.peek()[1] != ')':
@@ -125,7 +135,6 @@ class ParserExpresiones:
                 
             return nodo
             
-        # Operadores unarios básicos
         if t[1] in ['-', '!', '++', '--']:
             self.pos += 1
             nodo = self.parse_primario()

@@ -140,6 +140,12 @@ class AnalizadorSintactico:
         
         self.validar_keywords(tokens, linea_num)
         
+        self.validar_sintaxis_else(tokens, linea_num)
+
+        self.validar_sintaxis_switch(tokens, linea_num)
+        self.validar_sintaxis_case(tokens, linea_num)
+        self.validar_sintaxis_default(tokens, linea_num)
+        
         return len(self.errores_encontrados) == 0
     
     def validar_punto_coma(self, tokens, linea):
@@ -160,6 +166,8 @@ class AnalizadorSintactico:
             'if',
             'for',
             'switch',
+            'case',
+            'default',
             'struct',
             'interface',
             'type'
@@ -325,7 +333,6 @@ class AnalizadorSintactico:
                 agregar_error_patron("Falta llave de apertura '{' al final del if", linea, len(tokens)-1, contexto)
                 self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura en if")
                 
-            # Validación profunda de operaciones matemáticas y conjunciones mediante AST
             cond_tokens = tokens[1:-1]
             if any(t[1] == ';' for t in cond_tokens):
                 idx = next(i for i, t in enumerate(cond_tokens) if t[1] == ';')
@@ -347,6 +354,72 @@ class AnalizadorSintactico:
                     contexto = " ".join([t[1] for t in tokens])
                     agregar_error_patron("Se usó un operador de asignación '=' en lugar de operador relacional en el if", linea, i, contexto)
                     self.errores_encontrados.append(f"Línea {linea}: Asignación en condición de if")
+
+    def validar_sintaxis_else(self, tokens, linea):
+        if not tokens: return
+        
+        # Casos: "else {", "} else {", "} else if ... {" o "else if ... {"
+        idx_else = -1
+        for i, t in enumerate(tokens):
+            if t[1].lower() == 'else':
+                idx_else = i
+                break
+        
+        if idx_else == -1: return
+
+        if idx_else > 0 and tokens[idx_else-1][1] != '}':
+            pass
+
+        restante = tokens[idx_else+1:]
+        if not restante:
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Estructura else incompleta", linea, idx_else, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Estructura else incompleta")
+            return
+
+        # Caso "else {" o "} else {"
+        if restante[0][1] == '{':
+            if len(restante) > 1 and restante[-1][1] != '{':
+                 pass
+        # Caso "else if" o "} else if"
+        elif restante[0][1] == 'if':
+            self.validar_sintaxis_if(restante, linea)
+        else:
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Se esperaba '{' o 'if' después de 'else'", linea, idx_else + 1, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Error después de 'else'")
+
+    def validar_sintaxis_switch(self, tokens, linea):
+        if not tokens or tokens[0][1].lower() != 'switch':
+            return
+        
+        if tokens[-1][1] != '{':
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Falta llave de apertura '{' al final del switch", linea, len(tokens)-1, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Falta llave en switch")
+
+    def validar_sintaxis_case(self, tokens, linea):
+        if not tokens or tokens[0][1].lower() != 'case':
+            return
+        
+        if tokens[-1][1] != ':':
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Faltan dos puntos ':' al final del case", linea, len(tokens)-1, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Falta ':' en case")
+        
+        if len(tokens) < 3:
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Estructura case incompleta", linea, 0, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Case incompleto")
+
+    def validar_sintaxis_default(self, tokens, linea):
+        if not tokens or tokens[0][1].lower() != 'default':
+            return
+        
+        if len(tokens) != 2 or tokens[1][1] != ':':
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Estructura default incorrecta - se espera: default:", linea, 0, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Estructura default incorrecta")
     
     def validar_sintaxis_for(self, tokens, linea):
         if not tokens: return
@@ -364,7 +437,6 @@ class AnalizadorSintactico:
                 self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura en for")
             
             num_espacios = sum(1 for t in tokens if t[1] == ';')
-            # In Go, a for loop can have 0 or exactly 2 semicolons
             if num_espacios not in [0, 2]:
                 contexto = " ".join([t[1] for t in tokens])
                 agregar_error_patron("Estructura for inválida: se esperan 0 o 2 puntos y comas ';'", linea, 0, contexto)
@@ -413,7 +485,6 @@ class AnalizadorSintactico:
                     self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
             
             elif valor in ['++', '--']:
-                # En Go, ++ y -- sí que existen como statements. Los permitimos.
                 pass
     
     def validar_keywords(self, tokens, linea):
@@ -423,7 +494,7 @@ class AnalizadorSintactico:
             
             if es_palabra_reservada(valor) and i > 0:
                 anterior = tokens[i-1][1]
-                if anterior in ['var', 'func', 'type', 'struct', '=', ':=', ',', '(', '{']:
+                if anterior in ['var', 'func', 'type', 'struct', '=', ':=', ',', '(', '{', '}', 'else']:
                     continue
                 elif anterior == '.':
                     continue

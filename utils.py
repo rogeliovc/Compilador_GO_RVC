@@ -1,7 +1,8 @@
 KEYWORDS_GO = {
     'package', 'import', 'func', 'var', 'const', 'if', 'else', 'for', 'break', 
     'continue', 'return', 'struct', 'interface', 'type', 'map', 'range', 'chan', 
-    'select', 'defer', 'go', 'int', 'string', 'float', 'bool', 'true', 'false', 'nil'
+    'select', 'defer', 'go', 'int', 'string', 'float', 'bool', 'true', 'false', 'nil',
+    'switch', 'case', 'default'
 }
 
 TIPOS_BASICOS = [
