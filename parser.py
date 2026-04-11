@@ -455,6 +455,19 @@ class AnalizadorSintactico:
                             else:
                                 actual.append(t)
                         partes.append(actual)
+                        
+                        # Validar que la primera parte del for sea una declaración válida
+                        primera_parte = partes[0]
+                        if primera_parte:
+                            # En Go, la primera parte debe ser una declaración o estar vacía
+                            # No puede contener ':' solo (debe ser ':=' para declaración corta)
+                            if any(t[0] == 'TKN COLON' for t in primera_parte):
+                                contexto = " ".join([t[1] for t in tokens])
+                                from errors import agregar_error_patron
+                                agregar_error_patron("Sintaxis inválida en 'for': se espera ':=' para declaración corta, no ':'", linea, 0, contexto)
+                                self.errores_encontrados.append(f"Línea {linea}: Sintaxis inválida en 'for' - ':' no es válido, use ':='")
+                                return
+                        
                         cond_tokens = partes[1]
                     else:
                         cond_tokens = tokens[1:-1]
@@ -474,7 +487,16 @@ class AnalizadorSintactico:
             valor = token[1]
             
             if valor in ['+', '-', '*', '/', '+=', '-=', '*=', '/=', '==', '!=', '<', '>', '<=', '>=']:
+                sin_operando = False
+                
                 if i == 0 or i == len(tokens) - 1:
+                    sin_operando = True
+                elif i + 1 < len(tokens):
+                    siguiente = tokens[i+1][1]
+                    if siguiente in [';', '{', '}', ')', ']']:
+                        sin_operando = True
+                        
+                if sin_operando:
                     contexto = " ".join([t[1] for t in tokens])
                     agregar_error_patron(
                         f"Operador '{valor}' sin operando",

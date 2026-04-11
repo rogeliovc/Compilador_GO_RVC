@@ -49,20 +49,26 @@ class TablaSimbolos:
             simbolo = Simbolo(palabra, TipoSimbolo.PALABRA_RESERVADA, palabra, 0)
             self.agregar_simbolo(simbolo)
     
-    def agregar_simbolo(self, simbolo) -> bool:
+    def agregar_simbolo(self, simbolo, es_declaracion_corta: bool = False) -> bool:
         if simbolo.nombre in self.simbolos:
             # Verificar si ya existe en el ámbito actual
             for s in self.simbolos[simbolo.nombre]:
                 if s.ambito == simbolo.ambito:
-                    # Error de redefinición
-                    agregar_error_redefinicion(
-                        f"El {simbolo.tipo_simbolo.value} '{simbolo.nombre}' ya existe en el ámbito actual",
-                        simbolo.linea,
-                        0,
-                        f"{simbolo.tipo_simbolo.value} {simbolo.nombre}: {simbolo.tipo_dato}",
-                        simbolo.nombre
-                    )
-                    return False
+                    # Si es declaración corta (:=), permitir redeclaración en Go
+                    if es_declaracion_corta:
+                        # En Go, := puede redeclarar si al menos una variable es nueva
+                        # Por simplicidad, permitimos la redeclaración
+                        pass
+                    else:
+                        # Error de redefinición para declaraciones normales (var)
+                        agregar_error_redefinicion(
+                            f"El {simbolo.tipo_simbolo.value} '{simbolo.nombre}' ya existe en el ámbito actual",
+                            simbolo.linea,
+                            0,
+                            f"{simbolo.tipo_simbolo.value} {simbolo.nombre}: {simbolo.tipo_dato}",
+                            simbolo.nombre
+                        )
+                        return False
         self.simbolos.setdefault(simbolo.nombre, []).append(simbolo)
         return True
     
@@ -81,13 +87,13 @@ class TablaSimbolos:
     def existe_simbolo(self, nombre: str) -> bool:
         return self.buscar_simbolo(nombre) is not None
     
-    def agregar_variable(self, nombre: str, tipo_dato: str, linea: int) -> bool:
-        # Detectar ambigüedad antes de agregar
-        if not self._detectar_ambiguedad(nombre, tipo_dato, linea):
+    def agregar_variable(self, nombre: str, tipo_dato: str, linea: int, es_declaracion_corta: bool = False) -> bool:
+        # Detectar ambigüedad antes de agregar (solo si no es declaración corta)
+        if not es_declaracion_corta and not self._detectar_ambiguedad(nombre, tipo_dato, linea):
             return False
         
         simbolo = Simbolo(nombre, TipoSimbolo.VARIABLE, tipo_dato, linea, self.ambito_actual)
-        return self.agregar_simbolo(simbolo)
+        return self.agregar_simbolo(simbolo, es_declaracion_corta)
     
     def _detectar_ambiguedad(self, nombre: str, tipo: str, linea: int) -> bool:
         """Detecta ambigüedad de variables con mismo nombre y diferente tipo"""
@@ -135,7 +141,10 @@ class TablaSimbolos:
             
         # Patrón If
         if any(t[1].lower() == 'if' for t in tokens):
-            if tokens[0][1].lower() != 'if':
+            # En Go, 'if' puede estar después de 'else' (ej: "} else if condition {")
+            # Permitir if si está al inicio, después de 'else', o después de '}'
+            primer_token = tokens[0][1].lower()
+            if primer_token not in ['if', 'else', '}']:
                 tiene_comillas = any(t[0] in ['TKN_STRING', 'TKN COMILLA', 'TKN COMILLA_SIMPLE'] for t in tokens)
                 if not tiene_comillas:
                     return False, "ERROR SEMÁNTICO: Orden incorrecto, 'if' mal posicionado", None
@@ -147,7 +156,35 @@ class TablaSimbolos:
             if len(tokens) > primer_token and tokens[primer_token][0] in ['TKN EQ', 'TKN NEQ', 'TKN LT', 'TKN GT', 'TKN LTE', 'TKN GTE']:
                 return False, "ERROR SEMÁNTICO: Orden incorrecto, se encontró operador antes de variable en 'if'", None
                 
+            idx_if = next((i for i, t in enumerate(tokens) if t[1].lower() == 'if'), -1)
+            if idx_if != -1:
+                condicion_tokens = []
+                for t in tokens[idx_if+1:]:
+                    if t[1] == '{':
+                        break
+                    condicion_tokens.append(t)
+                    
+                if condicion_tokens:
+                    try:
+                        from ast_nodes import ParserExpresiones
+                        parser_expr = ParserExpresiones(condicion_tokens)
+                        parser_expr.parse()
+                    except SyntaxError as e:
+                        return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Condición del 'if' inválida -> {str(e)}", None
+
             return True, "Estructura de control 'if' analizada", None
+        
+        # Patrón Else
+        if any(t[1].lower() == 'else' for t in tokens):
+            # En Go, 'else' puede estar después de '}' (ej: "} else {")
+            # Permitir else si está al inicio o después de '}'
+            primer_token = tokens[0][1].lower()
+            if primer_token not in ['else', '}']:
+                tiene_comillas = any(t[0] in ['TKN_STRING', 'TKN COMILLA', 'TKN COMILLA_SIMPLE'] for t in tokens)
+                if not tiene_comillas:
+                    return False, "ERROR SEMÁNTICO: Orden incorrecto, 'else' mal posicionado", None
+            
+            return True, "Estructura de control 'else' analizada", None
         
         # Patrón For
         if any(t[1].lower() == 'for' for t in tokens):
@@ -160,6 +197,53 @@ class TablaSimbolos:
             if semicolons not in [0, 2]:
                 return False, "ERROR SINTÁCTICO/SEMÁNTICO: Bucle 'for' con formato incorrecto (solo 0 o 2 puntos y comas permitidos)", None
                 
+            if semicolons == 0:
+                idx_for = next((i for i, t in enumerate(tokens) if t[1].lower() == 'for'), -1)
+                if idx_for != -1:
+                    condicion = []
+                    for t in tokens[idx_for+1:]:
+                        if t[1] == '{':
+                            break
+                        condicion.append(t)
+                        
+                    if condicion and not any(t[1] == 'range' for t in condicion):
+                        try:
+                            from ast_nodes import ParserExpresiones
+                            parser_expr = ParserExpresiones(condicion)
+                            parser_expr.parse()
+                        except SyntaxError as e:
+                            return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Condición de bucle inválida -> {str(e)}", None
+                
+            if semicolons == 2:
+                # Validar la tercera parte del for (post-statement)
+                partes = []
+                actual = []
+                for t in tokens[1:-1]: # Excluir 'for' y la llave final si existe
+                    if t[1] == ';':
+                        partes.append(actual)
+                        actual = []
+                    else:
+                        actual.append(t)
+                partes.append(actual)
+                
+                if len(partes) == 3:
+                    condicion = partes[1]
+                    if condicion and not any(t[1] == 'range' for t in condicion):
+                        try:
+                            from ast_nodes import ParserExpresiones
+                            parser_expr = ParserExpresiones(condicion)
+                            parser_expr.parse()
+                        except SyntaxError as e:
+                            return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Condición del 'for' inválida -> {str(e)}", None
+
+                    tercera_parte = partes[2]
+                    # Verificar operadores sueltos sin asignación o sin ser incremento/decremento real
+                    operadores = [t for t in tercera_parte if t[1] in ['+', '-', '*', '/']]
+                    tiene_asig = any(t[1] == '=' for t in tercera_parte)
+                    if operadores and not tiene_asig:
+                        op = operadores[0][1]
+                        return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Operador '{op}' incompleto sin operando en el cierre del 'for'", None
+                        
             return True, "Estructura de control 'for' analizada", None
         
         if (len(tokens) >= 3 and tokens[0][0] == "TKN ID" and tokens[1][0] == "TKN DOT" and
@@ -193,10 +277,37 @@ class TablaSimbolos:
         if len(tokens) == 1 and tokens[0][0] in ["TKN LLAVE_A", "TKN LLAVE_C", "TKN PAREN_A", "TKN PAREN_C"]:
             return False, "Estructura de control (no es declaración)", None
 
-        #switch
+        #switch y case
         if any(t[1] in ["switch", "case", "default"] for t in tokens):
             keyword = next(t[1] for t in tokens if t[1] in ["switch", "case", "default"])
+            
+            if keyword in ["switch", "case"]:
+                idx_kw = next((i for i, t in enumerate(tokens) if t[1] == keyword), -1)
+                if idx_kw != -1:
+                    condicion_tokens = []
+                    for t in tokens[idx_kw+1:]:
+                        if t[1] in ['{', ':']:
+                            break
+                        condicion_tokens.append(t)
+                        
+                    if condicion_tokens:
+                        try:
+                            from ast_nodes import ParserExpresiones
+                            parser_expr = ParserExpresiones(condicion_tokens)
+                            parser_expr.parse()
+                        except SyntaxError as e:
+                            return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Condición del '{keyword}' inválida -> {str(e)}", None
+
             return True, f"Estructura de control '{keyword}' analizada", None
+            
+        # Saltos de control de flujo
+        if len(tokens) >= 1 and tokens[0][1] in ["break", "continue", "fallthrough", "return", "goto"]:
+            keyword = tokens[0][1]
+            return True, f"Salto de control de flujo '{keyword}' analizado", None
+
+        #const
+        if any(t[1] == "const" for t in tokens):
+            return True, "Declaración de constante(s) analizada", None
 
         if (len(tokens) >= 2 and tokens[0][1] == "package" and tokens[1][0] == "TKN ID"):
             
@@ -313,8 +424,8 @@ class TablaSimbolos:
                 i += 1
             
             tipo_base = tipo_dato.replace("*", "")
-            if not es_tipo_dato(tipo_base) and tipo_base != "struct":
-                pass
+            if not es_tipo_dato(tipo_base) and not self.existe_simbolo(tipo_base):
+                return False, f"ERROR SEMÁNTICO: Tipo de dato no reconocido '{tipo_base}' para la variable '{nombre_var}'", None
             
             tiene_asignacion = any(t[0] == "TKN ASIGN" or t[0] == "TKN WALRUS" for t in tokens)
             
@@ -365,6 +476,13 @@ class TablaSimbolos:
                 break
         
         if not all([tipo_dato, nombre_var]):
+            if any(t[0] == "TKN ASIGN" for t in tokens):
+                return False, "Asignación (no es declaración)", None
+            
+            # Patrón para operadores de incremento/decremento (++, --)
+            if len(tokens) == 2 and tokens[0][0] == "TKN ID" and tokens[1][0] in ["TKN INC", "TKN DEC"]:
+                return True, "Operación de incremento/decremento válida", None
+            
             return False, "No es una declaración válida", None
         
         simbolo = Simbolo(nombre_var, TipoSimbolo.VARIABLE, tipo_dato, 0, self.ambito_actual)
