@@ -26,9 +26,24 @@ class AnalizadorSintactico:
         return len(pila) == 0
     
     def procesar_linea_archivo(self, tokens, linea_num):
+        # Guardar información para detectar bloques vacíos
         for i, (tipo, valor) in enumerate(tokens):
             if valor == '{':
+                # Guardar la línea donde se abre la llave
                 self.pila_llaves.append((valor, linea_num, i))
+                # Verificar si hay un cierre en la misma línea Y si no hay contenido entre ellos
+                for j in range(i+1, len(tokens)):
+                    if tokens[j][1] == '}':
+                        # Verificar si realmente está vacío (no hay contenido entre { y })
+                        if self._esta_realmente_vacio(tokens, i, j):
+                            # Verificar si es un bloque significativo (función, for, if, switch, etc.)
+                            if self._es_bloque_significativo(tokens, i, j):
+                                # Bloque vacío en la misma línea: {}
+                                self._agregar_error_bloque_vacio("Llaves", linea_num, i, tokens)
+                        # Remover la apertura de la pila ya que se cerró
+                        if self.pila_llaves:
+                            self.pila_llaves.pop()
+                        break
             elif valor == '}':
                 if not self.pila_llaves:
                     self._agregar_error_sin_apertura("Llave", valor, linea_num, i, tokens)
@@ -36,8 +51,14 @@ class AnalizadorSintactico:
                     apertura, linea_apertura, pos_apertura = self.pila_llaves.pop()
                     if apertura != '{':
                         self._agregar_error_desbalanceado("Llaves", apertura, valor, linea_num, i, tokens)
+                    else:
+                        # Verificar si es un bloque vacío en líneas consecutivas
+                        if linea_num - linea_apertura == 1:
+                            # Verificar si la línea intermedia está vacía o solo tiene comentarios
+                            self._verificar_bloque_vacio_multilinea(linea_apertura, linea_num, tokens)
             elif valor == '(':
                 self.pila_parentesis.append((valor, linea_num, i))
+                # No detectar paréntesis vacíos en la misma línea (pueden ser válidos en funciones)
             elif valor == ')':
                 if not self.pila_parentesis:
                     self._agregar_error_sin_apertura("Paréntesis", valor, linea_num, i, tokens)
@@ -47,6 +68,17 @@ class AnalizadorSintactico:
                         self._agregar_error_desbalanceado("Paréntesis", apertura, valor, linea_num, i, tokens)
             elif valor == '[':
                 self.pila_corchetes.append((valor, linea_num, i))
+                # Verificar si hay un cierre en la misma línea Y si no hay contenido entre ellos
+                for j in range(i+1, len(tokens)):
+                    if tokens[j][1] == ']':
+                        # Verificar si realmente está vacío (no hay contenido entre [ y ])
+                        if self._esta_realmente_vacio(tokens, i, j):
+                            # Corchete vacío en la misma línea: []
+                            self._agregar_error_bloque_vacio("Corchetes", linea_num, i, tokens)
+                        # Remover la apertura de la pila ya que se cerró
+                        if self.pila_corchetes:
+                            self.pila_corchetes.pop()
+                        break
             elif valor == ']':
                 if not self.pila_corchetes:
                     self._agregar_error_sin_apertura("Corchete", valor, linea_num, i, tokens)
@@ -54,6 +86,52 @@ class AnalizadorSintactico:
                     apertura, linea_apertura, pos_apertura = self.pila_corchetes.pop()
                     if apertura != '[':
                         self._agregar_error_desbalanceado("Corchetes", apertura, valor, linea_num, i, tokens)
+    
+    def _agregar_error_bloque_vacio(self, tipo, linea, pos, tokens):
+        contexto = " ".join([t[1] for t in tokens])
+        from errors import agregar_error_patron
+        agregar_error_patron(
+            f"Bloque vacío detectado: {tipo.lower()} sin contenido",
+            linea,
+            pos,
+            contexto
+        )
+        self.errores_archivo.append(f"Línea {linea}: Bloque vacío - {tipo.lower()} sin contenido")
+    
+    def _verificar_bloque_vacio_multilinea(self, linea_apertura, linea_cierre, tokens):
+        # Este método verificaría si el bloque multilínea está vacío
+        # Por ahora, asumimos que si están en líneas consecutivas, es un bloque vacío
+        contexto = " ".join([t[1] for t in tokens])
+        from errors import agregar_error_patron
+        agregar_error_patron(
+            "Bloque vacío detectado: llaves sin contenido en líneas consecutivas",
+            linea_cierre,
+            0,
+            contexto
+        )
+        self.errores_archivo.append(f"Línea {linea_cierre}: Bloque vacío - llaves sin contenido")
+    
+    def _es_bloque_significativo(self, tokens, pos_apertura, pos_cierre):
+        """Determina si un bloque vacío es significativo y no debería estar vacío"""
+        # Buscar palabras clave antes de la apertura para identificar el tipo de bloque
+        for i in range(max(0, pos_apertura - 5), pos_apertura):
+            if i < len(tokens):
+                token = tokens[i][1].lower()
+                if token in ['func', 'for', 'if', 'else', 'switch', 'while', 'struct', 'interface', 'type']:
+                    return True
+        return False
+    
+    def _esta_realmente_vacio(self, tokens, pos_apertura, pos_cierre):
+        """Verifica si realmente no hay contenido entre los símbolos de apertura y cierre"""
+        # Verificar si hay tokens significativos entre apertura y cierre
+        for i in range(pos_apertura + 1, pos_cierre):
+            if i < len(tokens):
+                token = tokens[i][1]
+                # Ignorar espacios en blanco y comentarios
+                if token.strip() and token not in [' ', '\t', '\n']:
+                    # Si hay algo que no sea espacio, no está vacío
+                    return False
+        return True
     
     def finalizar_archivo(self):
         for simbolo, linea, pos in self.pila_llaves:
@@ -315,45 +393,6 @@ class AnalizadorSintactico:
                 contexto
             )
             self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura")
-    
-    def validar_sintaxis_if(self, tokens, linea):
-        if not tokens: return
-        
-        if tokens[0][1].lower() == 'if':
-            if len(tokens) < 3:
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron("Estructura if incompleta", linea, 0, contexto)
-                self.errores_encontrados.append(f"Línea {linea}: Estructura if incompleta")
-                return
-
-            # En Go, los paréntesis son opcionales en el 'if'.
-            
-            if tokens[-1][1] != '{':
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron("Falta llave de apertura '{' al final del if", linea, len(tokens)-1, contexto)
-                self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura en if")
-                
-            cond_tokens = tokens[1:-1]
-            if any(t[1] == ';' for t in cond_tokens):
-                idx = next(i for i, t in enumerate(cond_tokens) if t[1] == ';')
-                cond_tokens = cond_tokens[idx+1:]
-            
-            if cond_tokens:
-                try:
-                    from ast_nodes import ParserExpresiones
-                    parser_expr = ParserExpresiones(cond_tokens)
-                    parser_expr.parse()
-                except SyntaxError as e:
-                    msg = f"Error de sintaxis en expresión de 'if' -> {str(e)}"
-                    from errors import agregar_error_patron
-                    agregar_error_patron(msg, linea, 0, " ".join([t[1] for t in tokens]))
-                    self.errores_encontrados.append(f"Línea {linea}: {msg}")
-                
-            for i, t in enumerate(tokens):
-                if t[1] == '=' and t[0] == 'TKN ASIGN':
-                    contexto = " ".join([t[1] for t in tokens])
-                    agregar_error_patron("Se usó un operador de asignación '=' en lugar de operador relacional en el if", linea, i, contexto)
-                    self.errores_encontrados.append(f"Línea {linea}: Asignación en condición de if")
 
     def validar_sintaxis_else(self, tokens, linea):
         if not tokens: return
@@ -390,6 +429,7 @@ class AnalizadorSintactico:
             self.errores_encontrados.append(f"Línea {linea}: Error después de 'else'")
 
     def validar_sintaxis_switch(self, tokens, linea):
+        from errors import agregar_error_patron  # Importar aquí para evitar problemas de ámbito
         if not tokens or tokens[0][1].lower() != 'switch':
             return
         
@@ -397,6 +437,46 @@ class AnalizadorSintactico:
             contexto = " ".join([t[1] for t in tokens])
             agregar_error_patron("Falta llave de apertura '{' al final del switch", linea, len(tokens)-1, contexto)
             self.errores_encontrados.append(f"Línea {linea}: Falta llave en switch")
+
+    def validar_sintaxis_if(self, tokens, linea):
+        from errors import agregar_error_patron  # Importar aquí para evitar problemas de ámbito
+        if not tokens or tokens[0][1].lower() != 'if':
+            return
+        
+        if len(tokens) < 2:
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Estructura if incompleta", linea, 0, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Estructura if incompleta")
+            return
+
+        # En Go, los paréntesis son opcionales en el 'if'.
+        
+        if tokens[-1][1] != '{':
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Falta llave de apertura '{' al final del if", linea, len(tokens)-1, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura en if")
+                
+        cond_tokens = tokens[1:-1]
+        if any(t[1] == ';' for t in cond_tokens):
+            idx = next(i for i, t in enumerate(cond_tokens) if t[1] == ';')
+            cond_tokens = cond_tokens[idx+1:]
+        
+        if cond_tokens:
+            try:
+                from ast_nodes import ParserExpresiones
+                parser_expr = ParserExpresiones(cond_tokens)
+                parser_expr.parse()
+            except SyntaxError as e:
+                msg = f"Error de sintaxis en expresión de 'if' -> {str(e)}"
+                from errors import agregar_error_patron
+                agregar_error_patron(msg, linea, 0, " ".join([t[1] for t in tokens]))
+                self.errores_encontrados.append(f"Línea {linea}: {msg}")
+        
+        for i, t in enumerate(tokens):
+            if t[1] == '=' and t[0] == 'TKN ASIGN':
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron("Se usó un operador de asignación '=' en lugar de operador relacional en el if", linea, i, contexto)
+                self.errores_encontrados.append(f"Línea {linea}: Asignación en condición de if")
 
     def validar_sintaxis_case(self, tokens, linea):
         if not tokens or tokens[0][1].lower() != 'case':
@@ -418,10 +498,12 @@ class AnalizadorSintactico:
         
         if len(tokens) != 2 or tokens[1][1] != ':':
             contexto = " ".join([t[1] for t in tokens])
+            from errors import agregar_error_patron  # Importar aquí para evitar problemas de ámbito
             agregar_error_patron("Estructura default incorrecta - se espera: default:", linea, 0, contexto)
             self.errores_encontrados.append(f"Línea {linea}: Estructura default incorrecta")
     
     def validar_sintaxis_for(self, tokens, linea):
+        from errors import agregar_error_patron  # Importar aquí para evitar problemas de ámbito
         if not tokens: return
         
         if tokens[0][1].lower() == 'for':
@@ -438,6 +520,20 @@ class AnalizadorSintactico:
             
             num_espacios = sum(1 for t in tokens if t[1] == ';')
             if num_espacios not in [0, 2]:
+                # Verificar si es el caso específico de falta ; entre inicialización y condición
+                if num_espacios == 1:
+                    # Buscar patrón: for nombre := valor variable (falta ;)
+                    tiene_walrus = any(t[1] == ':=' for t in tokens)
+                    if tiene_walrus and len(tokens) >= 6:
+                        # Buscar si hay un ID después del valor (sin ; separando)
+                        for i in range(2, len(tokens)-2):  # Después de 'for' y antes del final
+                            if tokens[i][0] == 'TKN NUM' and i+1 < len(tokens)-2:
+                                if tokens[i+1][0] == 'TKN ID':
+                                    contexto = " ".join([t[1] for t in tokens])
+                                    agregar_error_patron("Estructura for inválida: falta ';' entre inicialización y condición", linea, 0, contexto)
+                                    self.errores_encontrados.append(f"Línea {linea}: Falta ';' en 'for' - se requiere separar inicialización y condición")
+                                    return
+
                 contexto = " ".join([t[1] for t in tokens])
                 agregar_error_patron("Estructura for inválida: se esperan 0 o 2 puntos y comas ';'", linea, 0, contexto)
                 self.errores_encontrados.append(f"Línea {linea}: Estructura for inválida (cantidad de ';')")

@@ -837,7 +837,15 @@ class CodeEditor:
                 tokens = self.parser.limpiar_tokens(tokens)
                 if not tokens:
                     continue
-                if not self.parser.validar_sintaxis_go(tokens, i, omitir_balance_simbolos=True):
+                                    # Validar sintaxis normal
+                    if not self.parser.validar_sintaxis_go(tokens, i, omitir_balance_simbolos=True):
+                        hay_errores = True
+                    
+                    # Validar estructuras vacías
+                    errores_vacias = validar_estructuras_vacias(tokens, i)
+                    if errores_vacias:
+                        hay_errores = True
+                        self.parser.errores_encontrados.extend(errores_vacias)
                     es_sintaxis_valida = False
                 self.parser.procesar_linea_archivo(tokens, i)
         
