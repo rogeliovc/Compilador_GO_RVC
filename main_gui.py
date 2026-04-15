@@ -29,6 +29,9 @@ class CodeEditor:
         self.parser = AnalizadorSintactico()
         self.semantic = AutomataSemantico()
         
+        # Establecer coordinación entre parser y semantic analyzer
+        self.parser.set_semantic_analyzer(self.semantic)
+        
         # IDE Components state
         self.tree: typing.Any = None
         self.tree_scroll: typing.Any = None
@@ -285,8 +288,12 @@ class CodeEditor:
         self.tree_scroll.pack(side='right', fill='y')
         
         self.tree.bind('<Double-1>', self.on_tree_double_click)
+        self.tree.bind('<Double-Button-1>', self.on_tree_double_click)  # Alternativa
         self.tree.bind('<<TreeviewOpen>>', self.on_tree_open)
         self.tree.bind('<Button-3>', self.show_context_menu)
+        
+        # Agregar binding para diagnóstico
+        self.tree.bind('<Button-1>', self.on_tree_single_click)
         
         self.current_workspace = os.getcwd()
         self.populate_tree()
@@ -343,14 +350,49 @@ class CodeEditor:
             self.tree.delete(children[0])
             self._populate_node(item_id, abspath)
             
+    def on_tree_single_click(self, event):
+        item_id = self.tree.identify_row(event.y)
+        if item_id:
+            print(f"DEBUG: Single-clicked item_id: {item_id}")
+            self.tree.selection_set(item_id)
+            self.tree.focus(item_id)
+    
     def on_tree_double_click(self, event):
-        item_id = self.tree.focus()
-        if not item_id: return
+        print(f"DEBUG: Double-click event received: {event}")
+        print(f"DEBUG: Event x,y: {event.x}, {event.y}")
+        
+        # Intentar obtener el item debajo del cursor
+        item_id = self.tree.identify_row(event.y)
+        
+        # Si no se puede identificar por posición, intentar con focus
+        if not item_id:
+            item_id = self.tree.focus()
+        
+        if not item_id: 
+            print("DEBUG: No item_id found")
+            return
+        
+        print(f"DEBUG: Double-clicked item_id: {item_id}")
+        
+        # Establecer el focus y selección explícitamente
+        self.tree.selection_set(item_id)
+        self.tree.focus(item_id)
+        
         tags = self.tree.item(item_id, "tags")
+        print(f"DEBUG: Tags: {tags}")
+        
         if tags:
             abspath = tags[0]
+            print(f"DEBUG: Absolute path: {abspath}")
+            print(f"DEBUG: Is file: {os.path.isfile(abspath)}")
+            
             if os.path.isfile(abspath):
+                print(f"DEBUG: Loading file: {abspath}")
                 self.load_file_content(abspath)
+            else:
+                print("DEBUG: Not a file, ignoring")
+        else:
+            print("DEBUG: No tags found")
 
     def _compilar_desde_arbol(self, abspath, accion):
         self.load_file_content(abspath)
@@ -697,7 +739,8 @@ class CodeEditor:
         run_menu.add_command(label="Paso 1: Análisis Léxico (Tokens)", accelerator="F5", command=self.analizar_lexico)
         run_menu.add_separator()
         run_menu.add_command(label="Paso 2a: Validar Bloques (Sintáctico)", accelerator="F6", command=self.validar_estructura)
-        run_menu.add_command(label="Paso 2b: Generar Árbol de Parseo", accelerator="F7", command=self.generar_arbol_parseo)
+        run_menu.add_command(label="Paso 2b: Validar Sintaxis Completa", accelerator="Ctrl+Y", command=self.validar_sintaxis_completa)
+        run_menu.add_command(label="Paso 2c: Generar Árbol de Parseo", accelerator="F7", command=self.generar_arbol_parseo)
         run_menu.add_separator()
         run_menu.add_command(label="Paso 3: Análisis Semántico", accelerator="F8", command=self.validar_declaraciones_go)
         run_menu.add_separator()
@@ -827,38 +870,30 @@ class CodeEditor:
         
         self.results_text.insert(tk.END, f"  > Total de tokens identificados: {len(tokens_totales)}\n")
         
-        # 2. Análisis sintáctico estructural
+        # 2. Análisis sintáctico estructural completo
         self.results_text.insert(tk.END, "\n[Fase 2] Análisis Sintáctico (Parser)\n")
         
-        es_sintaxis_valida = True
-        for i, linea in enumerate(lineas, 1):
-            if linea.strip() and not linea.strip().startswith('//'):
-                tokens = self.lexer.procesar(linea, i)
-                tokens = self.parser.limpiar_tokens(tokens)
-                if not tokens:
-                    continue
-                                    # Validar sintaxis normal
-                    if not self.parser.validar_sintaxis_go(tokens, i, omitir_balance_simbolos=True):
-                        hay_errores = True
-                    
-                    # Validar estructuras vacías
-                    errores_vacias = validar_estructuras_vacias(tokens, i)
-                    if errores_vacias:
-                        hay_errores = True
-                        self.parser.errores_encontrados.extend(errores_vacias)
-                    es_sintaxis_valida = False
-                self.parser.procesar_linea_archivo(tokens, i)
+        # Usar validar_archivo_completo que incluye detección de bloques vacíos
+        es_sintaxis_valida = self.parser.validar_archivo_completo(codigo)
         
-        if not self.parser.finalizar_archivo():
-            es_sintaxis_valida = False
-            
-        if es_sintaxis_valida:
-            self.results_text.insert(tk.END, "  > Status: Sintaxis de bloques estructuralmente válida.\n")
+        # Mostrar errores sintácticos detectados
+        errores_sintacticos = self.parser.obtener_errores()
+        if errores_sintacticos:
+            self.results_text.insert(tk.END, "  > Status: (ERROR) Se detectaron errores sintácticos:\n")
+            for error in errores_sintacticos:
+                self.results_text.insert(tk.END, f"    - {error}\n")
         else:
-            self.results_text.insert(tk.END, "  > Status: (ERROR) Se detectaron bloques o estructuras inválidas.\n")
+            self.results_text.insert(tk.END, "  > Status: Sintaxis de bloques estructuralmente válida.\n")
 
         # 3. Análisis semántico completo
         self.results_text.insert(tk.END, "\n[Fase 3] Análisis Semántico (Declaraciones)\n")
+        
+        # Mostrar errores semánticos detectados en validar_archivo_completo
+        errores_semanticos_fase2 = self.parser.obtener_errores_semanticos()
+        if errores_semanticos_fase2:
+            self.results_text.insert(tk.END, "  > Errores semánticos detectados:\n")
+            for error in errores_semanticos_fase2:
+                self.results_text.insert(tk.END, f"    - {error}\n")
         
         class Counts:
             validas: int = 0
@@ -867,7 +902,7 @@ class CodeEditor:
         counts = Counts()
         
         for i, linea in enumerate(lineas, 1):
-            if not linea.strip() or linea.strip().startswith('//'):
+            if not linea.strip():
                 continue
             
             tokens = self.lexer.procesar(linea, i)
@@ -875,6 +910,7 @@ class CodeEditor:
             if not tokens:
                 continue
                 
+            # Validar semántica
             es_valido, mensaje, simbolo = self.semantic.validar_declaracion(tokens)
             
             if es_valido:
@@ -1112,8 +1148,22 @@ class CodeEditor:
             tokens = self.parser.limpiar_tokens(tokens)
             if not tokens:
                 continue
-                
+            
+            # Primero validar sintaxis con el parser
+            self.parser.errores_encontrados = []  # Limpiar errores anteriores
+            self.parser.validar_sintaxis_return(tokens, lineas.index(linea) + 1)
+            errores_sintaxis = self.parser.errores_encontrados.copy()
+            
+            # Luego validar semántica
             es_valido, mensaje, simbolo = self.semantic.validar_declaracion(tokens)
+            
+            # Si hay errores sintácticos, mostrarlos primero
+            if errores_sintaxis:
+                self.results_text.insert(tk.END, f"✗ {linea}\n")
+                for error in errores_sintaxis:
+                    self.results_text.insert(tk.END, f"  ERROR: {error}\n")
+                counts.invalidas += 1
+                continue
             
             if es_valido:
                 self.results_text.insert(tk.END, f"✓ {linea}\n")

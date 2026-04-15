@@ -139,171 +139,15 @@ class TablaSimbolos:
         if len(tokens) < 1:
             return False, "Línea vacía", None
             
-        # Patrón If
-        if any(t[1].lower() == 'if' for t in tokens):
-            # En Go, 'if' puede estar después de 'else' (ej: "} else if condition {")
-            # Permitir if si está al inicio, después de 'else', o después de '}'
-            primer_token = tokens[0][1].lower()
-            if primer_token not in ['if', 'else', '}']:
-                tiene_comillas = any(t[0] in ['TKN_STRING', 'TKN COMILLA', 'TKN COMILLA_SIMPLE'] for t in tokens)
-                if not tiene_comillas:
-                    return False, "ERROR SEMÁNTICO: Orden incorrecto, 'if' mal posicionado", None
+        # Estructuras de control y saltos (delegados al Parser)
+        if any(t[1].lower() in ['if', 'else', 'for', 'switch', 'case', 'default'] for t in tokens):
+            return False, "Estructura de control", None
             
-            if any(t[0] == 'TKN ASIGN' and t[1] == '=' for t in tokens):
-                return False, "ERROR SINTÁCTICO/SEMÁNTICO: Uso de asignación en lugar de operador relacional en 'if'", None
-                
-            primer_token = 2 if len(tokens) > 1 and tokens[1][0] == 'TKN PAREN_A' else 1
-            if len(tokens) > primer_token and tokens[primer_token][0] in ['TKN EQ', 'TKN NEQ', 'TKN LT', 'TKN GT', 'TKN LTE', 'TKN GTE']:
-                return False, "ERROR SEMÁNTICO: Orden incorrecto, se encontró operador antes de variable en 'if'", None
-                
-            idx_if = next((i for i, t in enumerate(tokens) if t[1].lower() == 'if'), -1)
-            if idx_if != -1:
-                condicion_tokens = []
-                for t in tokens[idx_if+1:]:
-                    if t[1] == '{':
-                        break
-                    condicion_tokens.append(t)
-                    
-                if condicion_tokens:
-                    try:
-                        from ast_nodes import ParserExpresiones
-                        parser_expr = ParserExpresiones(condicion_tokens)
-                        parser_expr.parse()
-                    except SyntaxError as e:
-                        return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Condición del 'if' inválida -> {str(e)}", None
-
-            return True, "Estructura de control 'if' analizada", None
-        
-        # Patrón Else
-        if any(t[1].lower() == 'else' for t in tokens):
-            # En Go, 'else' puede estar después de '}' (ej: "} else {")
-            # Permitir else si está al inicio o después de '}'
-            primer_token = tokens[0][1].lower()
-            if primer_token not in ['else', '}']:
-                tiene_comillas = any(t[0] in ['TKN_STRING', 'TKN COMILLA', 'TKN COMILLA_SIMPLE'] for t in tokens)
-                if not tiene_comillas:
-                    return False, "ERROR SEMÁNTICO: Orden incorrecto, 'else' mal posicionado", None
-            
-            return True, "Estructura de control 'else' analizada", None
-        
-        # Patrón For
-        if any(t[1].lower() == 'for' for t in tokens):
-            if tokens[0][1].lower() != 'for':
-                tiene_comillas = any('COMILLA' in t[0] for t in tokens)
-                if not tiene_comillas:
-                    return False, "ERROR SEMÁNTICO: Orden incorrecto, 'for' mal posicionado", None
-            
-            semicolons = sum(1 for t in tokens if t[1] == ';')
-            if semicolons not in [0, 2]:
-                return False, "ERROR SINTÁCTICO/SEMÁNTICO: Bucle 'for' con formato incorrecto (solo 0 o 2 puntos y comas permitidos)", None
-                
-            if semicolons == 0:
-                idx_for = next((i for i, t in enumerate(tokens) if t[1].lower() == 'for'), -1)
-                if idx_for != -1:
-                    condicion = []
-                    for t in tokens[idx_for+1:]:
-                        if t[1] == '{':
-                            break
-                        condicion.append(t)
-                        
-                    if condicion and not any(t[1] == 'range' for t in condicion):
-                        try:
-                            from ast_nodes import ParserExpresiones
-                            parser_expr = ParserExpresiones(condicion)
-                            parser_expr.parse()
-                        except SyntaxError as e:
-                            return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Condición de bucle inválida -> {str(e)}", None
-                
-            if semicolons == 2:
-                # Validar la tercera parte del for (post-statement)
-                partes = []
-                actual = []
-                for t in tokens[1:-1]: # Excluir 'for' y la llave final si existe
-                    if t[1] == ';':
-                        partes.append(actual)
-                        actual = []
-                    else:
-                        actual.append(t)
-                partes.append(actual)
-                
-                if len(partes) == 3:
-                    condicion = partes[1]
-                    if condicion and not any(t[1] == 'range' for t in condicion):
-                        try:
-                            from ast_nodes import ParserExpresiones
-                            parser_expr = ParserExpresiones(condicion)
-                            parser_expr.parse()
-                        except SyntaxError as e:
-                            return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Condición del 'for' inválida -> {str(e)}", None
-
-                    tercera_parte = partes[2]
-                    # Verificar operadores sueltos sin asignación o sin ser incremento/decremento real
-                    operadores = [t for t in tercera_parte if t[1] in ['+', '-', '*', '/']]
-                    tiene_asig = any(t[1] == '=' for t in tercera_parte)
-                    if operadores and not tiene_asig:
-                        op = operadores[0][1]
-                        return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Operador '{op}' incompleto sin operando en el cierre del 'for'", None
-                        
-            return True, "Estructura de control 'for' analizada", None
-        
-        if (len(tokens) >= 3 and tokens[0][0] == "TKN ID" and tokens[1][0] == "TKN DOT" and
-            tokens[2][0] == "TKN ID"):
-            return False, "Llamada a función (no es declaración)", None
-        
-        if (len(tokens) >= 3 and tokens[0][0] == "TKN ID" and tokens[1][0] == "TKN PAREN_A"):
-            return False, "Llamada a función (no es declaración)", None
-        
-        if len(tokens) >= 2 and tokens[0][1] == "import" and tokens[1][0] == "TKN PAREN_A":
-            self.en_bloque_import = True
-            return True, "(INICIO) Bloque de imports", None
-
-        if self.en_bloque_import and len(tokens) == 1 and tokens[0][0] == "TKN PAREN_C":
-            self.en_bloque_import = False
-            return True, "(FIN) Bloque de imports", None
-
-        if self.en_bloque_import:
-            if len(tokens) == 1 and tokens[0][0] == "TKN_STRING":
-                paquete = tokens[0][1].strip('"').strip('`')
-                simbolo = Simbolo(paquete, TipoSimbolo.PALABRA_RESERVADA, "import", 0, self.ambito_actual)
-                self.agregar_simbolo(simbolo)
-                return True, f"Import \"{paquete}\" registrado", simbolo
-            if len(tokens) == 2 and tokens[0][0] == "TKN ID" and tokens[1][0] == "TKN_STRING":
-                alias = tokens[0][1]
-                paquete = tokens[1][1].strip('"').strip('`')
-                simbolo = Simbolo(alias, TipoSimbolo.PALABRA_RESERVADA, f"import:{paquete}", 0, self.ambito_actual)
-                self.agregar_simbolo(simbolo)
-                return True, f"Import {alias} \"{paquete}\" registrado", simbolo
-
-        if len(tokens) == 1 and tokens[0][0] in ["TKN LLAVE_A", "TKN LLAVE_C", "TKN PAREN_A", "TKN PAREN_C"]:
-            return False, "Estructura de control (no es declaración)", None
-
-        #switch y case
-        if any(t[1] in ["switch", "case", "default"] for t in tokens):
-            keyword = next(t[1] for t in tokens if t[1] in ["switch", "case", "default"])
-            
-            if keyword in ["switch", "case"]:
-                idx_kw = next((i for i, t in enumerate(tokens) if t[1] == keyword), -1)
-                if idx_kw != -1:
-                    condicion_tokens = []
-                    for t in tokens[idx_kw+1:]:
-                        if t[1] in ['{', ':']:
-                            break
-                        condicion_tokens.append(t)
-                        
-                    if condicion_tokens:
-                        try:
-                            from ast_nodes import ParserExpresiones
-                            parser_expr = ParserExpresiones(condicion_tokens)
-                            parser_expr.parse()
-                        except SyntaxError as e:
-                            return False, f"ERROR SINTÁCTICO/SEMÁNTICO: Condición del '{keyword}' inválida -> {str(e)}", None
-
-            return True, f"Estructura de control '{keyword}' analizada", None
-            
-        # Saltos de control de flujo
         if len(tokens) >= 1 and tokens[0][1] in ["break", "continue", "fallthrough", "return", "goto"]:
-            keyword = tokens[0][1]
-            return True, f"Salto de control de flujo '{keyword}' analizado", None
+            return False, "Salto de control de flujo", None
+        
+        if len(tokens) == 1 and tokens[0][0] in ["TKN LLAVE_A", "TKN LLAVE_C", "TKN PAREN_A", "TKN PAREN_C"]:
+            return False, "Estructura de control", None
 
         #const
         if any(t[1] == "const" for t in tokens):
@@ -479,9 +323,28 @@ class TablaSimbolos:
             if any(t[0] == "TKN ASIGN" for t in tokens):
                 return False, "Asignación (no es declaración)", None
             
+            # Patrón para cierres de bloque (incluyendo punto y coma)
+            if len(tokens) >= 1 and tokens[0][1] in ["}", ")", "]"]:
+                return False, "Cierre de bloque (no es declaración)", None
+            
             # Patrón para operadores de incremento/decremento (++, --)
-            if len(tokens) == 2 and tokens[0][0] == "TKN ID" and tokens[1][0] in ["TKN INC", "TKN DEC"]:
+            if len(tokens) >= 2 and tokens[0][0] == "TKN ID" and tokens[1][0] in ["TKN INC", "TKN DEC"]:
                 return True, "Operación de incremento/decremento válida", None
+            
+            # Patrón para llamadas a función: objeto.metodo() o funcion()
+            if len(tokens) >= 3:
+                # Buscar patrón: ID . ID ( ... )
+                for i in range(len(tokens) - 2):
+                    if (tokens[i][0] == "TKN ID" and 
+                        tokens[i+1][1] == "." and 
+                        tokens[i+2][0] == "TKN ID"):
+                        return False, "Llamada a método (no es declaración)", None
+                
+                # Buscar patrón: ID ( ... )
+                for i in range(len(tokens) - 1):
+                    if (tokens[i][0] == "TKN ID" and 
+                        tokens[i+1][0] == "TKN PAREN_A"):
+                        return False, "Llamada a función (no es declaración)", None
             
             return False, "No es una declaración válida", None
         
@@ -495,6 +358,38 @@ class TablaSimbolos:
         else:
             return False, f"ERROR: Variable {nombre_var} ya existe en el ámbito actual", None
 
+    
+    def entrar_ambito_for(self, nombre_for: str = "for"):
+        """Entrar a un nuevo ámbito de bucle for"""
+        nuevo_ambito = Ambito.LOCAL  # Los bucles for tienen ámbito local
+        self.pila_ambitos.append(nuevo_ambito)
+        self.ambito_actual = nuevo_ambito
+        return nuevo_ambito
+    
+    def salir_ambito_for(self):
+        """Salir del ámbito actual del bucle for"""
+        if len(self.pila_ambitos) > 1:  # Mantener siempre el ámbito global
+            self.pila_ambitos.pop()
+            self.ambito_actual = self.pila_ambitos[-1]
+        return self.ambito_actual
+    
+    def limpiar_ambito_local(self):
+        """Limpiar todas las variables del ámbito local actual"""
+        ambito_a_limpiar = self.ambito_actual
+        if ambito_a_limpiar == Ambito.LOCAL:
+            # Eliminar todos los símbolos del ámbito local
+            nombres_a_eliminar = []
+            for nombre, simbolos in self.simbolos.items():
+                # Mantener solo los símbolos que no son del ámbito local actual
+                simbolos_filtrados = [s for s in simbolos if s.ambito != ambito_a_limpiar]
+                if simbolos_filtrados:
+                    self.simbolos[nombre] = simbolos_filtrados
+                else:
+                    nombres_a_eliminar.append(nombre)
+            
+            # Eliminar nombres que ya no tienen símbolos
+            for nombre in nombres_a_eliminar:
+                del self.simbolos[nombre]
     
     def imprimir_tabla(self):
         print("=== TABLA DE SÍMBOLOS ===")

@@ -25,7 +25,7 @@ def es_identificador_valido(nombre):
         return False
     if nombre[0].isdigit():
         return False
-    if not all(c.isalnum() or c == '_' or c == '.' for c in nombre):
+    if not all(c.isalnum() or c == '_' for c in nombre):
         return False
     if nombre in KEYWORDS_GO:
         return False
