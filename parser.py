@@ -1,1168 +1,521 @@
-from ast_nodes import Numero, OperacionBinaria, Variable
-from errors import agregar_error_patron, agregar_error_estructural
+from ast_nodes import (
+    Programa, Bloque, DeclaracionVariable, Asignacion, If, For, 
+    Switch, Case, Funcion, Return, Import, Numero, OperacionBinaria, Variable,
+    ParserExpresiones
+)
+from errors import agregar_error_patron
 from utils import es_identificador_valido, KEYWORDS_GO
 
 class AnalizadorSintactico:
     def __init__(self):
         self.errores_encontrados = []
-
-        self.pila_llaves = []  
-        self.pila_parentesis = []
-        self.pila_corchetes = []
-        self.errores_archivo = []
-        self.lineas_codigo = []  # Almacenar líneas para verificar bloques vacíos multilínea
-        
-        self.variables_declaradas = {}
-        self.semantic_analyzer = None  # Referencia al analizador semántico para coordinación
+        self.tokens = []
+        self.pos = 0
 
     def set_semantic_analyzer(self, semantic_analyzer):
-        """Establecer referencia al analizador semántico para coordinación"""
-        self.semantic_analyzer = semantic_analyzer
-    
-    def notificar_bucle_for(self, tokens, linea):
-        """Notificar al semantic sobre bucle for detectado para gestión de ámbito"""
-        if self.semantic_analyzer:
-            self.semantic_analyzer.notificar_bucle_for_detectado(tokens, linea)
-    
-    def notificar_condicional(self, tokens, linea):
-        """Notificar al semantic sobre condicionales detectados para gestión semántica"""
-        if self.semantic_analyzer:
-            self.semantic_analyzer.notificar_condicional_detectado(tokens, linea)
+        pass
 
-    def validar_apertura_cierres(self, entrada):
-        pila = []
-        pares = {')': '(', ']': '[', '}': '{'}
-        
-        for caracter in entrada:
-            if caracter in pares.values():
-                pila.append(caracter)
-            elif caracter in pares.keys():
-                if not pila or pila.pop() != pares[caracter]:
-                    return False
-        return len(pila) == 0
-    
-    def procesar_linea_archivo(self, tokens, linea_num):
-        # Primero procesar aperturas
-        for i, (tipo, valor) in enumerate(tokens):
-            if valor == '{':
-                # Guardar la línea donde se abre la llave y los tokens para verificar después
-                self.pila_llaves.append((valor, linea_num, i, tokens))
-        
-        # Luego procesar cierres
-        for i, (tipo, valor) in enumerate(tokens):
-            if valor == '}':
-                if not self.pila_llaves:
-                    self._agregar_error_sin_apertura("Llave", valor, linea_num, i, tokens)
-                else:
-                    apertura, linea_apertura, pos_apertura, tokens_apertura = self.pila_llaves.pop()
-                    if apertura != '{':
-                        self._agregar_error_desbalanceado("Llaves", apertura, valor, linea_num, i, tokens)
-                    else:
-                        # Verificar si es un bloque vacío multilínea
-                        if linea_num > linea_apertura:
-                            # Verificar si las líneas intermedias están vacías o solo tienen comentarios
-                            self._verificar_bloque_vacio_multilinea(linea_apertura, linea_num, tokens_apertura, tokens)
-        
-        # Continuar con otros símbolos
-        for i, (tipo, valor) in enumerate(tokens):
-            if valor == '(':
-                self.pila_parentesis.append((valor, linea_num, i))
-                # No detectar paréntesis vacíos en la misma línea (pueden ser válidos en funciones)
-            elif valor == ')':
-                if not self.pila_parentesis:
-                    self._agregar_error_sin_apertura("Paréntesis", valor, linea_num, i, tokens)
-                else:
-                    apertura, linea_apertura, pos_apertura = self.pila_parentesis.pop()
-                    if apertura != '(':
-                        self._agregar_error_desbalanceado("Paréntesis", apertura, valor, linea_num, i, tokens)
-            elif valor == '[':
-                # Verificar si es parte del patrón []tipo de Go ANTES de agregar a la pila
-                es_patron_go = False
-                if i + 1 < len(tokens) and tokens[i+1][1] == ']':
-                    # Posible patrón []tipo
-                    if i + 2 < len(tokens):
-                        siguiente_token = tokens[i+2][1]
-                        from utils import TIPOS_BASICOS
-                        if siguiente_token in TIPOS_BASICOS:
-                            es_patron_go = True
-                            # No agregar a la pila, es un patrón válido de Go
-                            # Marcar que el siguiente corchete de cierre también debe ser ignorado
-                            # Usamos una bandera temporal para recordar esto
-                            if not hasattr(self, '_ignorar_proximo_corchete_cierre'):
-                                self._ignorar_proximo_corchete_cierre = False
-                            self._ignorar_proximo_corchete_cierre = True
-                            continue
-                
-                # Si no es patrón []tipo, procesar normalmente
-                self.pila_corchetes.append((valor, linea_num, i))
-                # Verificar si hay un cierre en la misma línea Y si no hay contenido entre ellos
-                for j in range(i+1, len(tokens)):
-                    if tokens[j][1] == ']':
-                        # Verificar si realmente está vacío (no hay contenido entre [ y ])
-                        if self._esta_realmente_vacio(tokens, i, j):
-                            # Corchete vacío en la misma línea: []
-                            self._agregar_error_bloque_vacio("Corchetes", linea_num, i, tokens)
-                        # Remover la apertura de la pila ya que se cerró
-                        if self.pila_corchetes:
-                            self.pila_corchetes.pop()
-                        break
-            elif valor == ']':
-                # Verificar si debemos ignorar este corchete porque es parte del patrón []tipo
-                if hasattr(self, '_ignorar_proximo_corchete_cierre') and self._ignorar_proximo_corchete_cierre:
-                    # Es parte del patrón []tipo, ignorar
-                    self._ignorar_proximo_corchete_cierre = False
-                else:
-                    # Procesamiento normal del corchete de cierre
-                    if not self.pila_corchetes:
-                        self._agregar_error_sin_apertura("Corchete", valor, linea_num, i, tokens)
-                    else:
-                        apertura, linea_apertura, pos_apertura = self.pila_corchetes.pop()
-                        if apertura != '[':
-                            self._agregar_error_desbalanceado("Corchetes", apertura, valor, linea_num, i, tokens)
-    
-    def _agregar_error_bloque_vacio(self, tipo, linea, pos, tokens):
-        contexto = " ".join([t[1] for t in tokens])
-        from errors import agregar_error_patron
-        agregar_error_patron(
-            f"Bloque vacío detectado: {tipo.lower()} sin contenido",
-            linea,
-            pos,
-            contexto
-        )
-        self.errores_archivo.append(f"Línea {linea}: Bloque vacío - {tipo.lower()} sin contenido")
-    
-    def _verificar_bloque_vacio_multilinea(self, linea_apertura, linea_cierre, tokens_apertura, tokens_cierre):
-        """Verifica si un bloque multilínea está vacío"""
-        # Verificar si es un bloque significativo
-        if not self._es_bloque_significativo(tokens_apertura, 0, len(tokens_apertura)-1):
-            return
-            
-        # Verificar si las líneas intermedias están realmente vacías
-        if hasattr(self, 'lineas_codigo') and self.lineas_codigo:
-            lineas_intermedias_vacias = True
-            # Verificar líneas entre la apertura y el cierre (excluyendo ambas)
-            # Las líneas están numeradas desde 1, pero el array desde 0
-            for i in range(linea_apertura + 1, linea_cierre):
-                if 0 <= i-1 < len(self.lineas_codigo):
-                    linea_intermedia = self.lineas_codigo[i-1].strip()
-                    # Si la línea no está vacía y no es solo el cierre, el bloque no está vacío
-                    if linea_intermedia and linea_intermedia != '}':
-                        # Si es un comentario, lo consideramos como contenido válido
-                        # (los comentarios son válidos en bloques vacíos)
-                        lineas_intermedias_vacias = False
-                        break
-            
-            if lineas_intermedias_vacias:
-                contexto = " ".join([t[1] for t in tokens_cierre])
-                from errors import agregar_error_patron
-                agregar_error_patron(
-                    "Bloque vacío detectado: llaves sin contenido en múltiples líneas",
-                    linea_cierre,
-                    0,
-                    contexto
-                )
-                self.errores_archivo.append(f"Línea {linea_cierre}: Bloque vacío - llaves sin contenido")
-    
-    def _es_bloque_significativo(self, tokens, pos_apertura, pos_cierre):
-        """Determina si un bloque vacío es significativo y no debería estar vacío"""
-        # Buscar palabras clave en toda la línea para identificar el tipo de bloque
-        for i, token in enumerate(tokens):
-            token_valor = token[1].lower()
-            if token_valor in ['func', 'for', 'if', 'else', 'switch', 'while', 'struct', 'interface', 'type']:
-                return True
-        return False
-    
-    def _esta_realmente_vacio(self, tokens, pos_apertura, pos_cierre):
-        """Verifica si realmente no hay contenido entre los símbolos de apertura y cierre"""
-        from utils import TIPOS_BASICOS
-        
-        # EXCEPCIÓN PARA GO: Patrón []tipo (corchetes vacíos seguidos de tipo)
-        # Ejemplo: []int, []string, []bool son válidos en Go
-        if pos_cierre - pos_apertura == 1:  # Corchetes están juntos: []
-            # Verificar si el siguiente token es un tipo válido
-            if pos_cierre + 1 < len(tokens):
-                siguiente_token = tokens[pos_cierre + 1][1]
-                if siguiente_token in TIPOS_BASICOS:
-                    return False  # No está vacío, es el patrón []tipo de Go
-        
-        # Verificar si hay tokens significativos entre apertura y cierre
-        for i in range(pos_apertura + 1, pos_cierre):
-            if i < len(tokens):
-                token = tokens[i][1]
-                # Ignorar espacios en blanco, tabulaciones, saltos de línea y comentarios simples
-                if token.strip() and token not in [' ', '\t', '\n', '//', '/*', '*/']:
-                    # Si hay algo que no sea espacio o comentario, no está vacío
-                    # Pero si solo hay espacios, sigue estando vacío
-                    if token.strip() not in [' ', '']:
-                        # EXCEPCIÓN PARA GO: Si el contenido es un tipo válido, los corchetes vacíos son válidos
-                        # Ejemplo: [int] donde int está dentro de los corchetes
-                        if token in TIPOS_BASICOS:
-                            # Verificar si es el único token entre corchetes
-                            if pos_cierre - pos_apertura == 2:  # [ tipo ]
-                                return False  # No está vacío, tiene un tipo válido
-                            else:
-                                # Hay múltiples tokens, verificar si todos son tipos válidos
-                                todos_tipos = True
-                                for j in range(pos_apertura + 1, pos_cierre):
-                                    if j < len(tokens) and tokens[j][1] not in TIPOS_BASICOS:
-                                        todos_tipos = False
-                                        break
-                                if todos_tipos:
-                                    return False  # No está vacío, contiene tipos válidos
-                        return False
-        return True
-    
-    def finalizar_archivo(self):
-        for simbolo, linea, pos in self.pila_llaves:
-            self.errores_archivo.append(f"Línea {linea}: Llave '{simbolo}' sin cerrar al final del archivo")
-        
-        for simbolo, linea, pos in self.pila_parentesis:
-            self.errores_archivo.append(f"Línea {linea}: Paréntesis '{simbolo}' sin cerrar al final del archivo")
-        
-        for simbolo, linea, pos in self.pila_corchetes:
-            self.errores_archivo.append(f"Línea {linea}: Corchete '{simbolo}' sin cerrar al final del archivo")
-        
-        return len(self.errores_archivo) == 0
-    
-    def limpiar_estado_archivo(self):
-        self.pila_llaves.clear()
-        self.pila_parentesis.clear()
-        self.pila_corchetes.clear()
-        self.errores_archivo.clear()
-        self.variables_declaradas.clear()  
-    
-    def _agregar_error_sin_apertura(self, tipo, valor, linea, pos, tokens):
-        contexto = " ".join([t[1] for t in tokens])
-        agregar_error_estructural(
-            f"{tipo} '{valor}' sin apertura",
-            linea,
-            pos,
-            contexto
-        )
-        self.errores_archivo.append(f"Línea {linea}: {tipo} '{valor}' sin apertura")
-    
-    def _agregar_error_desbalanceado(self, tipo, apertura, cierre, linea, pos, tokens):
-        contexto = " ".join([t[1] for t in tokens])
-        agregar_error_estructural(
-            f"{tipo} desbalanceados: se abrió '{apertura}' pero se cerró '{cierre}'",
-            linea,
-            pos,
-            contexto
-        )
-        self.errores_archivo.append(f"Línea {linea}: {tipo} desbalanceados")
+    def peek(self):
+        if self.pos < len(self.tokens):
+            return self.tokens[self.pos]
+        return None
+
+    def avanzar(self):
+        t = self.peek()
+        if t: self.pos += 1
+        return t
+
+    def match_valor(self, valor_esperado):
+        t = self.peek()
+        if t and t[1] == valor_esperado:
+            self.pos += 1
+            return t
+        return None
+
+    def match_tipo(self, tipo_esperado):
+        t = self.peek()
+        if t and t[0] == tipo_esperado:
+            self.pos += 1
+            return t
+        return None
 
     def limpiar_tokens(self, tokens):
         tokens_limpios = []
         i = 0
         while i < len(tokens):
-            tipo, valor = tokens[i]
-            
+            tipo, valor = tokens[i][:2]
+            linea = tokens[i][2] if len(tokens[i]) > 2 else 0
             if tipo == 'TKN OPDIV' and i + 1 < len(tokens) and tokens[i + 1][1] == '/':
                 i += 2
                 while i < len(tokens) and tokens[i][1] not in ['\n', ';']:
                     i += 1
                 continue
-            
             if tipo not in ['TKN COMENTARIO']:
-                tokens_limpios.append((tipo, valor))
-            
+                tokens_limpios.append((tipo, valor, linea))
             i += 1
-        
         return tokens_limpios
-    
-    def validar_sintaxis_go(self, tokens, linea_num=1, omitir_balance_simbolos=False):
-        self.errores_encontrados = []
-        
-        if not tokens:
-            return True
-        
-        tokens = self.limpiar_tokens(tokens)
-        
-        if not tokens:
-            return True
-        
-        self.validar_punto_coma(tokens, linea_num)
-        self.validar_estructura_sintactica(tokens, linea_num)
-        
-        if not omitir_balance_simbolos:
-            self.validar_balance_simbolos(tokens, linea_num)
-        
-        self.validar_sintaxis_funcion(tokens, linea_num)
-        
-        self.validar_sintaxis_if(tokens, linea_num)
-        
-        self.validar_sintaxis_for(tokens, linea_num)
-        
-        self.validar_operadores(tokens, linea_num)
-        
-        self.validar_keywords(tokens, linea_num)
-        
-        self.validar_sintaxis_else(tokens, linea_num)
 
-        self.validar_sintaxis_switch(tokens, linea_num)
-        self.validar_sintaxis_case(tokens, linea_num)
-        self.validar_sintaxis_default(tokens, linea_num)
-        self.validar_sintaxis_return(tokens, linea_num)
-        
-        return len(self.errores_encontrados) == 0
-    
-    def validar_punto_coma(self, tokens, linea):
-        # Esta validación era heurística y solo hacía "pass" al final.
-        # Ahora que el Lexer (ASI) inserta los TKN PUNTO_COMA de manera precisa,
-        # dejamos que el AST/Parser estructurado controle dónde era necesario el ';'.
-        pass
-    
-    def validar_estructura_sintactica(self, tokens, linea):
-        if not tokens:
-            return
-        
-        if tokens[0][0] == 'TKN VAR':
-            if len(tokens) < 3:
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron(
-                    "Declaración var incompleta - estructura: var nombre tipo [= valor];",
-                    linea,
-                    0,
-                    contexto
-                )
-                self.errores_encontrados.append(f"Línea {linea}: Estructura var incompleta")
-                return
-            
-            # Verificar si el segundo token no es un ID válido. Permite '(' para var blocks.
-            nombre_tkn = tokens[1][0]
-            if nombre_tkn != 'TKN ID' and tokens[1][1] != '(':
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron(
-                    "Estructura var incorrecta - se espera: var nombre tipo [= valor];",
-                    linea,
-                    0,
-                    contexto
-                )
-                self.errores_encontrados.append(f"Línea {linea}: Estructura var incorrecta")
-        
-        elif any((t[0] == 'TKN WALRUS') for t in tokens):
-            pos = next((i for i, t in enumerate(tokens) if (t[0] == 'TKN WALRUS')), -1)
-            # ':=' no puede estar al principio (debe haber algo a la izquierda) y debe haber algo a la derecha
-            if pos == 0 or pos >= len(tokens) - 1:
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron(
-                    "Declaración corta inválida - estructura: nombre := valor;",
-                    linea,
-                    0,
-                    contexto
-                )
-                self.errores_encontrados.append(f"Línea {linea}: Estructura := incorrecta")
-    
-    def validar_balance_simbolos(self, tokens, linea):
-        simbolos = "".join([valor for tipo, valor in tokens if tipo in 
-                         ['TKN PAREN_A', 'TKN PAREN_C', 'TKN CORAPER', 
-                          'TKN CORCIERRE', 'TKN LLAVE_A', 'TKN LLAVE_C']])
-        
-        if not self.validar_apertura_cierres(simbolos):
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_estructural(
-                f"Símbolos desbalanceados en la línea",
-                linea,
-                0,
-                contexto
-            )
-            self.errores_encontrados.append(f"Línea {linea}: Símbolos desbalanceados")
-    
-    def validar_sintaxis_funcion(self, tokens, linea):
-        if not tokens or tokens[0][0] != 'TKN FUNC':
-            return
-        
-        if len(tokens) < 3:
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron(
-                "Declaración de función incompleta",
-                linea,
-                0,
-                contexto
-            )
-            self.errores_encontrados.append(f"Línea {linea}: Función incompleta")
-            return
-        
-        nombre = tokens[1][1]
-        if not es_identificador_valido(nombre):
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron(
-                f"Nombre de función inválido: '{nombre}'",
-                linea,
-                tokens[1][2] if len(tokens[1]) > 2 else 0,
-                contexto
-            )
-            self.errores_encontrados.append(f"Línea {linea}: Nombre de función inválido")
-        
-        tiene_parentesis_a = False
-        tiene_parentesis_c = False
-        tiene_llave_a = False
-        
-        for tipo, valor in tokens:
-            if valor == '(':
-                tiene_parentesis_a = True
-            elif valor == ')':
-                tiene_parentesis_c = True
-            elif valor == '{':
-                tiene_llave_a = True
-        
-        if not tiene_parentesis_a:
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron(
-                "Faltan paréntesis de apertura en declaración de función",
-                linea,
-                tokens[2][2] if len(tokens[2]) > 2 else 0,
-                contexto
-            )
-            self.errores_encontrados.append(f"Línea {linea}: Faltan paréntesis de apertura")
-        
-        if not tiene_parentesis_c:
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron(
-                "Faltan paréntesis de cierre en declaración de función",
-                linea,
-                0,
-                contexto
-            )
-            self.errores_encontrados.append(f"Línea {linea}: Faltan paréntesis de cierre")
-        
-        if not tiene_llave_a:
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron(
-                "Falta llave de apertura en cuerpo de función",
-                linea,
-                0,
-                contexto
-            )
-            self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura")
+    def agregar_error(self, mensaje, linea):
+        self.errores_encontrados.append(f"Línea {linea}: ERROR SINTÁCTICO - {mensaje}")
+        from errors import agregar_error_estructural
+        agregar_error_estructural(mensaje, linea)
 
-    def validar_sintaxis_else(self, tokens, linea):
-        if not tokens: return
-        
-        # Casos: "else {", "} else {", "} else if ... {" o "else if ... {"
-        idx_else = -1
-        for i, t in enumerate(tokens):
-            if t[1].lower() == 'else':
-                idx_else = i
-                break
-        
-        if idx_else == -1: return
-
-        if idx_else > 0 and tokens[idx_else-1][1] != '}':
-            pass
-
-        restante = tokens[idx_else+1:]
-        if not restante:
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron("Estructura else incompleta", linea, idx_else, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Estructura else incompleta")
-            return
-
-        # Caso "else {" o "} else {"
-        if restante[0][1] == '{':
-            if len(restante) > 1 and restante[-1][1] != '{':
-                 pass
-        # Caso "else if" o "} else if"
-        elif restante[0][1] == 'if':
-            self.validar_sintaxis_if(restante, linea)
-        else:
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron("Se esperaba '{' o 'if' después de 'else'", linea, idx_else + 1, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Error después de 'else'")
-
-    def validar_sintaxis_switch(self, tokens, linea):
-        from errors import agregar_error_patron  # Importar aquí para evitar problemas de ámbito
-        if not tokens or tokens[0][1].lower() != 'switch':
-            return
-        
-        # Notificar al semantic analyzer sobre detección de switch
-        self.notificar_condicional(tokens, linea)
-        
-        if tokens[-1][1] != '{':
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron("Falta llave de apertura '{' al final del switch", linea, len(tokens)-1, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Falta llave en switch")
-
-    def validar_sintaxis_if(self, tokens, linea):
-        from errors import agregar_error_patron  # Importar aquí para evitar problemas de ámbito
-        if not tokens or tokens[0][1].lower() != 'if':
-            return
-        
-        # Notificar al semantic analyzer sobre detección de if
-        self.notificar_condicional(tokens, linea)
-        
-        if len(tokens) < 2:
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron("Estructura if incompleta", linea, 0, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Estructura if incompleta")
-            return
-
-        # En Go, los paréntesis son opcionales en el 'if'.
-        
-        if tokens[-1][1] != '{':
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron("Falta llave de apertura '{' al final del if", linea, len(tokens)-1, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura en if")
-                
-        cond_tokens = tokens[1:-1]
-        if any(t[1] == ';' for t in cond_tokens):
-            idx = next(i for i, t in enumerate(cond_tokens) if t[1] == ';')
-            cond_tokens = cond_tokens[idx+1:]
-        
-        if cond_tokens:
-            try:
-                from ast_nodes import ParserExpresiones
-                parser_expr = ParserExpresiones(cond_tokens)
-                parser_expr.parse()
-            except SyntaxError as e:
-                msg = f"Error de sintaxis en expresión de 'if' -> {str(e)}"
-                from errors import agregar_error_patron
-                agregar_error_patron(msg, linea, 0, " ".join([t[1] for t in tokens]))
-                self.errores_encontrados.append(f"Línea {linea}: {msg}")
-        
-        # Se elimina la validación que causaba errores falsos cuando se utilizaba '='
-        # en la inicialización de la declaración de bloque if, algo permitido en Go
-
-    def validar_sintaxis_case(self, tokens, linea):
-        if not tokens or tokens[0][1].lower() != 'case':
-            return
-        
-        # Notificar al semantic analyzer sobre detección de case
-        self.notificar_condicional(tokens, linea)
-        
-        if tokens[-1][1] != ':':
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron("Faltan dos puntos ':' al final del case", linea, len(tokens)-1, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Falta ':' en case")
-        
-        if len(tokens) < 3:
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron("Estructura case incompleta", linea, 0, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Case incompleto")
-            return
-        
-        # Validar la estructura de la expresión del case
-        # Extraer tokens entre 'case' y ':'
-        expresion_tokens = tokens[1:-1]  # Excluir 'case' y ':'
-        
-        if not expresion_tokens:
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron("Case sin expresión - se espera: case <expresión>:", linea, 0, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Case sin expresión")
-            return
-        
-        # Detectar patrones inválidos: dos identificadores/números consecutivos sin operador
-        for i in range(len(expresion_tokens) - 1):
-            token_actual = expresion_tokens[i]
-            token_siguiente = expresion_tokens[i + 1]
-            
-            # Si ambos son identificadores o números y no hay operador entre ellos
-            if ((token_actual[0] in ['TKN ID', 'TKN NUM', 'TKN STRING'] and 
-                 token_siguiente[0] in ['TKN ID', 'TKN NUM', 'TKN STRING']) and
-                token_siguiente[1] not in [',', '||', '&&']):
-                
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron(f"Estructura case inválida - falta operador entre '{token_actual[1]}' y '{token_siguiente[1]}'", linea, 0, contexto)
-                self.errores_encontrados.append(f"Línea {linea}: Case inválido - falta operador")
-                return
-
-    def validar_sintaxis_default(self, tokens, linea):
-        if not tokens or tokens[0][1].lower() != 'default':
-            return
-        
-        # Notificar al semantic analyzer sobre detección de default
-        self.notificar_condicional(tokens, linea)
-        
-        if len(tokens) != 2 or tokens[1][1] != ':':
-            contexto = " ".join([t[1] for t in tokens])
-            from errors import agregar_error_patron  # Importar aquí para evitar problemas de ámbito
-            agregar_error_patron("Estructura default incorrecta - se espera: default:", linea, 0, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Estructura default incorrecta")
-    
-    def validar_sintaxis_return(self, tokens, linea):
-        """Valida la sintaxis de la instrucción return"""
-        if not tokens:
-            return
-        
-        # Buscar si hay un return en la línea
-        for i, (tipo, valor) in enumerate(tokens):
-            if valor == 'return':
-                # Caso 1: return está al final de la línea sin nada
-                if i == len(tokens) - 1:
-                    # return está solo al final - esto es un error sintáctico
-                    contexto = " ".join([t[1] for t in tokens])
-                    from errors import agregar_error_patron
-                    agregar_error_patron(f"'return' incompleto, se esperaba una expresión o ';' para función void", linea, i, contexto)
-                    self.errores_encontrados.append(f"Línea {linea}: Error sintáctico - 'return' incompleto, se esperaba una expresión o ';' para función void")
-                
-                # Caso 2: return; (sin valores de retorno)
-                elif i == len(tokens) - 2 and tokens[i+1][1] == ';':
-                    # return; - válido para funciones void
-                    pass
-                
-                # Caso 3: return <expresion>
-                elif i+1 < len(tokens):
-                    siguiente_token = tokens[i+1][1]
-                    if siguiente_token == ';':
-                        # return; - válido pero podría ser un error si la función espera retornar algo
-                        pass  # La validación semántica se encargará de verificar si la función debe retornar algo
-                    elif siguiente_token in ['}', ')']:
-                        # return seguido de cierre de bloque - error
-                        contexto = " ".join([t[1] for t in tokens])
-                        from errors import agregar_error_patron
-                        agregar_error_patron(f"'return' incompleto, se esperaba una expresión antes de '{siguiente_token}'", linea, i, contexto)
-                        self.errores_encontrados.append(f"Línea {linea}: Error sintáctico - 'return' incompleto, se esperaba una expresión antes de '{siguiente_token}'")
-                    # else: return <expresion> - válido sintácticamente
-                
-                break
-    
-    def validar_sintaxis_for(self, tokens, linea):
-        from errors import agregar_error_patron  # Importar aquí para evitar problemas de ámbito
-        if not tokens: return
-        
-        if tokens[0][1].lower() == 'for':
-            self.notificar_bucle_for(tokens, linea)
-            
-            if len(tokens) < 2:
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron("Estructura for incompleta", linea, 0, contexto)
-                self.errores_encontrados.append(f"Línea {linea}: Estructura for incompleta")
-                return
-
-            # ERROR: Paréntesis no permitidos alrededor de la condición en Go
-            if len(tokens) > 1 and tokens[1][1] == '(':
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron("Paréntesis no permitidos en bucle for - Go no usa paréntesis alrededor de las condiciones", linea, 1, contexto)
-                self.errores_encontrados.append(f"Línea {linea}: ERROR - Paréntesis no permitidos en for")
-
-            # ERROR: Pre-incremento ++i no permitido en Go
-            for i, token in enumerate(tokens):
-                if token[1] == '++':
-                    # Verificar si es pre-incremento (++variable)
-                    if i < len(tokens) - 1 and tokens[i+1][0] == 'TKN ID':
-                        # Esto es ++variable (pre-incremento)
-                        # Verificar que no sea parte de una expresión válida como variable++
-                        if i == 0 or tokens[i-1][1] not in ['TKN ID', ')', ']']:
-                            contexto = " ".join([t[1] for t in tokens])
-                            agregar_error_patron("Pre-incremento no permitido en Go - use post-incremento (variable++)", linea, i, contexto)
-                            self.errores_encontrados.append(f"Línea {linea}: ERROR - Pre-incremento ++{tokens[i+1][1]} no permitido")
-
-            if tokens[-1][1] != '{':
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron("Falta llave de apertura '{' al final del for", linea, len(tokens)-1, contexto)
-                self.errores_encontrados.append(f"Línea {linea}: Falta llave de apertura en for")
-            
-            num_espacios = sum(1 for t in tokens if t[1] == ';')
-            if num_espacios not in [0, 2]:
-                # Verificar si es el caso específico de falta ; entre inicialización y condición
-                if num_espacios == 1:
-                    # Buscar patrón: for nombre := valor variable (falta ;)
-                    tiene_walrus = any(t[1] == ':=' for t in tokens)
-                    if tiene_walrus and len(tokens) >= 6:
-                        # Buscar si hay un ID después del valor (sin ; separando)
-                        for i in range(2, len(tokens)-2):  # Después de 'for' y antes del final
-                            if tokens[i][0] == 'TKN NUM' and i+1 < len(tokens)-2:
-                                if tokens[i+1][0] == 'TKN ID':
-                                    contexto = " ".join([t[1] for t in tokens])
-                                    agregar_error_patron("Estructura for inválida: falta ';' entre inicialización y condición", linea, 0, contexto)
-                                    self.errores_encontrados.append(f"Línea {linea}: Falta ';' en 'for' - se requiere separar inicialización y condición")
-                                    return
-
-                contexto = " ".join([t[1] for t in tokens])
-                agregar_error_patron("Estructura for inválida: se esperan 0 o 2 puntos y comas ';'", linea, 0, contexto)
-                self.errores_encontrados.append(f"Línea {linea}: Estructura for inválida (cantidad de ';')")
-            else:
-                # Construccion y validación del AST
-                try:
-                    from ast_nodes import ParserExpresiones
-                    if num_espacios == 2:
-                        partes = []
-                        actual = []
-                        for t in tokens[1:-1]:
-                            if t[1] == ';':
-                                partes.append(actual)
-                                actual = []
-                            else:
-                                actual.append(t)
-                        partes.append(actual)
-                        
-                        # Validar que la primera parte del for sea una declaración válida
-                        primera_parte = partes[0]
-                        if primera_parte:
-                            # En Go, la primera parte debe ser una declaración o estar vacía
-                            # No puede contener ':' solo (debe ser ':=' para declaración corta)
-                            if any(t[0] == 'TKN COLON' for t in primera_parte):
-                                contexto = " ".join([t[1] for t in tokens])
-                                from errors import agregar_error_patron
-                                agregar_error_patron("Sintaxis inválida en 'for': se espera ':=' para declaración corta, no ':'", linea, 0, contexto)
-                                self.errores_encontrados.append(f"Línea {linea}: Sintaxis inválida en 'for' - ':' no es válido, use ':='")
-                                return
-                        
-                        # Validar variables en la condición del for
-                        if len(partes) > 1:
-                            cond_tokens = partes[1]
-                            self.validar_variables_en_expresion(cond_tokens, linea, "condición del for")
-                        
-                        tercera_parte = partes[2]
-                        # La validación de operadores se hace en validar_operadores() de forma centralizada
-                    else:
-                        # For como while (condición única) o for-range
-                        contenido_for = tokens[1:-1]  # Ignorar 'for' y '{'
-                        if contenido_for:
-                            if any(t[1] == 'range' for t in contenido_for):
-                                # Detectar for-range
-                                if contenido_for:
-                                    # Validar estructura for-range
-                                    range_pos = next(i for i, t in enumerate(contenido_for) if t[1] == 'range')
-                                    if range_pos == 0:
-                                        contexto = " ".join([t[1] for t in tokens])
-                                        from errors import agregar_error_patron
-                                        agregar_error_patron("Estructura for-range inválida - se requiere: for indice, valor := range coleccion", linea, 0, contexto)
-                                        self.errores_encontrados.append(f"Línea {linea}: Estructura for-range inválida")
-                                        return
-                            else:
-                                # For como while (condición única)
-                                # La condición debe ser una expresión válida
-                                parser_expr = ParserExpresiones(contenido_for)
-                                parser_expr.parse()
-                        else:
-                            # For infinito (sin componentes) - válido
-                            pass
-                except SyntaxError as e:
-                    msg = f"Error de sintaxis en expresión de 'for' -> {str(e)}"
-                    from errors import agregar_error_patron
-                    agregar_error_patron(msg, linea, 0, " ".join([t[1] for t in tokens]))
-                    self.errores_encontrados.append(f"Línea {linea}: {msg}")
-
-    def validar_sintaxis_switch(self, tokens, linea):
-        """Validar sintaxis específica para sentencias switch en Go"""
-        from errors import agregar_error_patron
-        
-        if not tokens or tokens[0][1].lower() != 'switch':
-            return
-        
-        # ERROR: Switch sin llave de apertura
-        if tokens[-1][1] != '{':
-            contexto = " ".join([t[1] for t in tokens])
-            agregar_error_patron("Falta llave de apertura '{' en switch", linea, len(tokens)-1, contexto)
-            self.errores_encontrados.append(f"Línea {linea}: Falta llave en switch")
-            return
-        
-        # Extraer la expresión del switch (si existe)
-        if len(tokens) >= 2 and tokens[1][1] != '{':
-            expresion_switch = tokens[1:-1]  # Todo entre 'switch' y '{'
-            
-            # Validar que la expresión sea sintácticamente válida
-            try:
-                from ast_nodes import ParserExpresiones
-                if expresion_switch:
-                    # Validar variables en la expresión del switch
-                    self.validar_variables_en_expresion(expresion_switch, linea, "expresión del switch")
-                    
-                    # Verificar si hay operadores sin operandos
-                    self.validar_operadores(expresion_switch, linea)
-            except SyntaxError as e:
-                msg = f"Error de sintaxis en expresión de switch -> {str(e)}"
-                agregar_error_patron(msg, linea, 1, " ".join([t[1] for t in expresion_switch]))
-                self.errores_encontrados.append(f"Línea {linea}: {msg}")
-
-    def validar_variables_en_expresion(self, tokens, linea, contexto=""):
-        """Validar si las variables en una expresión están declaradas previamente"""
-        # Esta función reutiliza la lógica del semantic analyzer para verificar variables
-        # Se puede llamar desde el parser para validar expresiones en for y switch
-        if not tokens:
-            return
-            
-        # Buscar variables en la expresión y verificar si están declaradas
-        for i, token in enumerate(tokens):
-            if token[0] == 'TKN ID':
-                var_name = token[1]
-                
-                # Ignorar palabras clave y tipos básicos
-                from utils import KEYWORDS_GO, TIPOS_BASICOS
-                if var_name in KEYWORDS_GO or var_name in TIPOS_BASICOS:
-                    continue
-                
-                # Verificar si la variable está declarada en la tabla de símbolos
-                if hasattr(self, 'semantic_analyzer') and self.semantic_analyzer:
-                    if not self.semantic_analyzer.tabla_simbolos.existe_simbolo(var_name):
-                        from errors import agregar_error_patron
-                        contexto_expresion = " ".join([t[1] for t in tokens])
-                        agregar_error_patron(
-                            f"Variable '{var_name}' no declarada en {contexto}",
-                            linea,
-                            i,
-                            contexto_expresion
-                        )
-                        self.errores_encontrados.append(f"Línea {linea}: Variable '{var_name}' no declarada en {contexto}")
-    
-    def validar_operadores(self, tokens, linea):
-        for i, token in enumerate(tokens):
-            valor = token[1]
-            
-            # Validar operadores aritméticos y de comparación
-            if valor in ['+', '-', '*', '/', '+=', '-=', '*=', '/=', '==', '!=', '<', '>', '<=', '>=', '&&', '||']:
-                sin_operando = False
-                
-                if i == 0 or i == len(tokens) - 1:
-                    sin_operando = True
-                elif i + 1 < len(tokens):
-                    siguiente = tokens[i+1][1]
-                    if siguiente in [';', '{', '}', ')', ']']:
-                        sin_operando = True
-                        
-                if sin_operando:
-                    contexto = " ".join([t[1] for t in tokens])
-                    agregar_error_patron(
-                        f"Operador '{valor}' sin operando",
-                        linea,
-                        i,
-                        contexto
-                    )
-                    self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
-            
-            # Validar operadores lógicos incompletos (& y | individuales)
-            elif valor in ['&', '|']:
-                # En Go, & y | individuales son operadores bit a bit, pero comúnmente se usan incorrectamente
-                # cuando se quiere decir && o ||
-                contexto = " ".join([t[1] for t in tokens])
-                
-                # Verificar si está en un contexto donde típicamente se usarían operadores lógicos
-                if any(palabra in contexto.lower() for palabra in ['if ', 'for ', 'case ', 'return ', '= ', ':=']):
-                    agregar_error_patron(
-                        f"Operador lógico incompleto '{valor}' - se esperaba '&&' u '||'",
-                        linea,
-                        i,
-                        contexto
-                    )
-                    self.errores_encontrados.append(f"Línea {linea}: Operador lógico incompleto '{valor}' - use '&&' u '||'")
-                else:
-                    # Validar que tenga operandos si es operador bit a bit
-                    sin_operando = False
-                    if i == 0 or i == len(tokens) - 1:
-                        sin_operando = True
-                    elif i + 1 < len(tokens):
-                        siguiente = tokens[i+1][1]
-                        if siguiente in [';', '{', '}', ')', ']']:
-                            sin_operando = True
-                    
-                    if sin_operando:
-                        agregar_error_patron(
-                            f"Operador bit a bit '{valor}' sin operando",
-                            linea,
-                            i,
-                            contexto
-                        )
-                        self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
-            
-            # Validar operadores de comparación incompletos
-            elif valor in ['<', '>']:
-                # Verificar si podría ser un operador incompleto como <=, >=
-                contexto = " ".join([t[1] for t in tokens])
-                
-                # Verificar si está en un contexto donde típicamente se usarían comparaciones
-                if any(palabra in contexto.lower() for palabra in ['if ', 'for ', 'case ', 'return ', '= ', ':=']):
-                    # Verificar si el siguiente token podría completar el operador
-                    if i + 1 < len(tokens):
-                        siguiente = tokens[i + 1][1]
-                        if valor == '<' and siguiente == '=':
-                            pass  # Es válido (<=)
-                        elif valor == '>' and siguiente == '=':
-                            pass  # Es válido (>=)
-                        elif siguiente in ['=', '<', '>']:
-                            # Podría ser un operador incompleto
-                            agregar_error_patron(
-                                f"Operador de comparación inválido '{valor}{siguiente}' - se esperaba '<=', '>=', '!=' o '=='",
-                                linea,
-                                i,
-                                contexto
-                            )
-                            self.errores_encontrados.append(f"Línea {linea}: Operador de comparación inválido '{valor}{siguiente}'")
-                        else:
-                            # Operador individual (<, >) en contexto de comparación
-                            agregar_error_patron(
-                                f"Operador de comparación incompleto '{valor}' - se esperaba '<=', '>=', '!=' o '=='",
-                                linea,
-                                i,
-                                contexto
-                            )
-                            self.errores_encontrados.append(f"Línea {linea}: Operador de comparación incompleto '{valor}'")
-                else:
-                    # Validar que tenga operandos si es operador válido en otro contexto
-                    sin_operando = False
-                    if i == 0 or i == len(tokens) - 1:
-                        sin_operando = True
-                    elif i + 1 < len(tokens):
-                        siguiente = tokens[i+1][1]
-                        if siguiente in [';', '{', '}', ')', ']']:
-                            sin_operando = True
-                    
-                    if sin_operando:
-                        agregar_error_patron(
-                            f"Operador '{valor}' sin operando",
-                            linea,
-                            i,
-                            contexto
-                        )
-                        self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
-            
-            # Validar operador NOT (!) por separado
-            elif valor == '!':
-                # En Go, ! es un operador lógico NOT válido por sí solo
-                # Solo es inválido si no tiene operando derecho
-                if i == len(tokens) - 1:
-                    contexto = " ".join([t[1] for t in tokens])
-                    agregar_error_patron(
-                        f"Operador lógico NOT '{valor}' sin operando",
-                        linea,
-                        i,
-                        contexto
-                    )
-                    self.errores_encontrados.append(f"Línea {linea}: Operador NOT '{valor}' sin operando")
-                else:
-                    # Validar que tenga operandos si es operador válido en otro contexto
-                    sin_operando = False
-                    if i == 0 or i == len(tokens) - 1:
-                        sin_operando = True
-                    elif i + 1 < len(tokens):
-                        siguiente = tokens[i+1][1]
-                        if siguiente in [';', '{', '}', ')', ']']:
-                            sin_operando = True
-                    
-                    if sin_operando:
-                        agregar_error_patron(
-                            f"Operador '{valor}' sin operando",
-                            linea,
-                            i,
-                            contexto
-                        )
-                        self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
-            
-            # Validar operador de asignación incompleto (= individual cuando podría ser ==)
-            elif valor == '=':
-                # Verificar si podría ser una comparación incompleta (==)
-                contexto = " ".join([t[1] for t in tokens])
-                
-                # Verificar si está en un contexto donde típicamente se usarían comparaciones
-                # pero excluir bucles for donde = es válido en post-incremento
-                if any(palabra in contexto.lower() for palabra in ['if ', 'case ', 'return ']):
-                    # Verificar si el siguiente token podría completar el operador
-                    if i + 1 < len(tokens) and tokens[i + 1][1] == '=':
-                        pass  # Es válido (==)
-                    else:
-                        # Podría ser una comparación incompleta
-                        agregar_error_patron(
-                            f"Posible comparación incompleta '{valor}' - se esperaba '==' para comparación",
-                            linea,
-                            i,
-                            contexto
-                        )
-                        self.errores_encontrados.append(f"Línea {linea}: Posible comparación incompleta '{valor}' - use '=='")
-            
-            elif valor in ['++', '--']:
-                pass
-        
-        # Detectar falta de operadores lógicos entre identificadores
-        for i in range(len(tokens) - 1):
-            token_actual = tokens[i]
-            token_siguiente = tokens[i + 1]
-            
-            # Si ambos son identificadores o números y no hay operador entre ellos
-            if ((token_actual[0] in ['TKN ID', 'TKN NUM', 'TKN STRING'] and 
-                 token_siguiente[0] in ['TKN ID', 'TKN NUM', 'TKN STRING']) and
-                token_siguiente[1] not in [',', '||', '&&', '+', '-', '*', '/', '==', '!=', '<', '>', '<=', '>=', ';', '{', '}', '(', ')', '[', ']']):
-                
-                # Verificar si estamos en un contexto donde se esperaría un operador lógico
-                contexto_linea = " ".join([t[1] for t in tokens])
-                
-                # Contextos donde típicamente faltan operadores lógicos
-                if any(palabra in contexto_linea.lower() for palabra in ['if ', 'for ', 'case ', 'return ', '= ', ':=']):
-                    contexto = " ".join([t[1] for t in tokens])
-                    agregar_error_patron(
-                        f"Falta operador lógico entre '{token_actual[1]}' y '{token_siguiente[1]}' - se esperaba '&&' u '||'",
-                        linea,
-                        i,
-                        contexto
-                    )
-                    self.errores_encontrados.append(f"Línea {linea}: Falta operador lógico entre '{token_actual[1]}' y '{token_siguiente[1]}'")
-    
-    def validar_keywords(self, tokens, linea):
-        from utils import es_palabra_reservada
-        for i, token in enumerate(tokens):
-            valor = token[1]
-            
-            if es_palabra_reservada(valor) and i > 0:
-                anterior = tokens[i-1][1]
-                if anterior in ['var', 'func', 'type', 'struct', '=', ':=', ',', '(', '{', '}', 'else']:
-                    continue
-                elif anterior == '.':
-                    continue
-                elif valor in ['range', 'true', 'false', 'nil', 'iota']:
-                    continue
-                else:
-                    contexto = " ".join([t[1] for t in tokens])
-                    agregar_error_patron(
-                        f"Uso inválido de palabra reservada '{valor}' como identificador",
-                        linea,
-                        i,
-                        contexto
-                    )
-                    self.errores_encontrados.append(f"Línea {linea}: Keyword '{valor}' usado como identificador")
-    
     def obtener_errores(self):
         return self.errores_encontrados
-    
-    def obtener_errores_semanticos(self):
-        """Obtiene los errores semánticos detectados durante validar_archivo_completo"""
-        return getattr(self, 'errores_semanticos', [])
-    
-    def generar_arbol_parseo(self, tokens):
-        try:
-            valores = [valor for tipo, valor in tokens]
-            valores = self._procesar_parentesis(valores)
-            ast = self._parsear_expresion_simple(valores)
-            if ast:
-                return self._formatear_arbol(ast)
-            return "No se pudo generar el árbol de parseo"
-        except Exception as e:
-            return f"Error: {str(e)}"
-    
-    def _procesar_parentesis(self, valores):
-        i = 0
-        while i < len(valores):
-            if valores[i] == '(':
-                nivel = 1
-                j = i + 1
-                while j < len(valores) and nivel > 0:
-                    if valores[j] == '(':
-                        nivel += 1
-                    elif valores[j] == ')':
-                        nivel -= 1
-                    j += 1
-                
-                if nivel == 0:
-                    expresion_interna = valores[i+1:j-1]
-                    expresion_procesada = self._procesar_parentesis(expresion_interna)
-                    ast_interno = self._parsear_expresion_simple(expresion_procesada)
-                    
-                    valores[i:j] = [ast_interno]
-                    i -= 1
-            i += 1
+
+    def parsear_programa(self, tokens):
+        self.tokens = self.limpiar_tokens(tokens)
+        self.pos = 0
+        self.errores_encontrados = []
         
-        return valores
-    
-    def _parsear_expresion_simple(self, valores):
-        if not valores:
+        # Obtenemos la línea inicial para el programa
+        linea_prog = self.tokens[0][2] if self.tokens else 0
+        programa = Programa(linea_prog)
+
+        while self.pos < len(self.tokens):
+            if self.peek() and self.peek()[1] == ';':
+                self.avanzar()
+                continue
+                
+            try:
+                sentencia = self.parsear_sentencia()
+                if sentencia:
+                    programa.agregar_hijo(sentencia)
+            except SyntaxError as e:
+                t = self.peek()
+                linea = t[2] if t else 0
+                self.agregar_error(str(e), linea)
+                self.avanzar()
+                while self.peek() and self.peek()[1] not in [';', '}', '{']:
+                    self.avanzar()
+
+        return programa
+
+    def parsear_sentencia(self):
+        t = self.peek()
+        if not t: return None
+
+        valor = t[1]
+        if valor == 'var':
+            return self.parsear_declaracion_var()
+        elif valor == 'if':
+            return self.parsear_if()
+        elif valor == 'for':
+            return self.parsear_for()
+        elif valor == 'switch':
+            return self.parsear_switch()
+        elif valor == 'func':
+            return self.parsear_funcion()
+        elif valor == 'return':
+            return self.parsear_return()
+        elif valor == 'import':
+            return self.parsear_import()
+        elif valor == 'package':
+            return self.parsear_package()
+        elif valor == '{':
+            return self.parsear_bloque()
+        else:
+            return self.parsear_asignacion_o_expresion()
+
+    def parsear_import(self):
+        t_import = self.match_valor('import')
+        linea = t_import[2]
+        
+        t_str = self.match_tipo('TKN STRING')
+        if not t_str:
+            self.agregar_error("Importación inválida, se espera: import \"paquete\"", linea)
+            return None
+        
+        paquete = t_str[1].strip('"').strip('`')
+        return Import(paquete, linea)
+
+    def parsear_package(self):
+        t_pkg = self.match_valor('package')
+        linea = t_pkg[2]
+        
+        t_id = self.match_tipo('TKN ID')
+        if not t_id:
+            self.agregar_error("Se espera un identificador después de 'package'", linea)
             return None
             
-        for operadores in [['*', '/', '×'], ['+', '-']]:
-            i = 0
-            while i < len(valores):
-                if valores[i] in operadores:
-                    if i > 0 and i < len(valores) - 1:
-                        if isinstance(valores[i-1], str):
-                            if valores[i-1].replace('.', '', 1).isdigit():
-                                izquierdo = Numero(valores[i-1])
-                            else:
-                                izquierdo = Variable(valores[i-1])
-                        else:
-                            izquierdo = valores[i-1]
-                        
-                        if isinstance(valores[i+1], str):
-                            if valores[i+1].replace('.', '', 1).isdigit():
-                                derecho = Numero(valores[i+1])
-                            else:
-                                derecho = Variable(valores[i+1])
-                        else:
-                            derecho = valores[i+1]
-                        
-                        operacion = OperacionBinaria(valores[i], izquierdo, derecho)
-                        
-                        valores[i-1:i+2] = [operacion]
-                        i -= 1
-                i += 1
+        nombre = t_id[1]
+        # Creamos un nodo generico o uno especial. Como no hay Package node en ast_nodes, crearemos Variable temporal o uno nuevo?
+        # En ast_nodes no hemos creado Package. Podemos importar un nuevo nodo o reutilizar Import
+        from ast_nodes import NodoAST
+        class Package(NodoAST):
+            def __init__(self, nombre, linea=0):
+                super().__init__("Package", nombre, linea)
+        return Package(nombre, linea)
+
+    def parsear_declaracion_var(self):
+        t_var = self.match_valor('var')
+        linea = t_var[2]
         
-        return valores[0] if valores else None
-    
-    def _formatear_arbol(self, nodo, nivel=0, prefijo=""):
-        if nodo is None:
-            return ""
+        id_token = self.match_tipo('TKN ID')
+        if not id_token:
+            self.agregar_error("Se esperaba un identificador después de 'var'", linea)
+            return None
+
+        nombre = id_token[1]
+        tipo_dato = None
+
+        t = self.peek()
+        if t and (t[0] in ['TKN ID'] or t[1] in ['int', 'float64', 'string', 'bool']):
+            tipo_dato = t[1]
+            self.avanzar()
+
+        expresion_valor = None
         
-        resultado = ""
-        indentacion = "    " * nivel
+        if self.match_valor('='):
+            parser_expr = ParserExpresiones(self.tokens[self.pos:])
+            try:
+                expresion_valor = parser_expr.parse_expresion()
+                self.pos += parser_expr.pos 
+            except SyntaxError as e:
+                self.agregar_error(f"Error en la expresión: {str(e)}", linea)
+
+        if not tipo_dato and not expresion_valor:
+            self.agregar_error(f"Declaración de '{nombre}' incompleta: falta tipo o asignación", linea)
+
+        return DeclaracionVariable(nombre, tipo_dato, expresion_valor, linea)
+
+    def parsear_asignacion_o_expresion(self):
+        pos_inicial = self.pos
+        t_actual = self.peek()
+        if not t_actual: return None
+        linea = t_actual[2]
         
-        if nodo.tipo == "Numero":
-            resultado += f"{indentacion}{prefijo}Numero: {nodo.valor}\n"
-        elif nodo.tipo in ["Suma", "Resta", "Multiplica", "Divide"]:
-            resultado += f"{indentacion}{prefijo}{nodo.tipo}\n"
-            if len(nodo.hijos) >= 2:
-                resultado += self._formatear_arbol(nodo.hijos[0], nivel + 1, "├── ")
-                resultado += self._formatear_arbol(nodo.hijos[1], nivel + 1, "└── ")
-        elif nodo.tipo == "Variable":
-            resultado += f"{indentacion}{prefijo}Variable: {nodo.valor}\n"
-        else:
-            resultado += f"{indentacion}{prefijo}{nodo.tipo}"
-            if nodo.valor:
-                resultado += f": {nodo.valor}"
-            resultado += "\n"
-        
-        return resultado
-    
-    def validar_archivo_completo(self, codigo_completo):
-        self.errores_encontrados = []
-        self.limpiar_estado_archivo()
-        
-        # Almacenar las líneas del código para verificar bloques vacíos multilínea
-        self.lineas_codigo = codigo_completo.split('\n')
-        
-        from lexer import AnalizadorLexico
-        from semantic import AutomataSemantico
-        lexer = AnalizadorLexico()
-        analizador_semantico = AutomataSemantico()
-        
-        lineas = self.lineas_codigo
-        errores_totales = []
-        
-        errores_sintacticos = []
-        errores_semanticos_totales = []
-        
-        for i, linea in enumerate(lineas, 1):
-            if linea.strip():
-                tokens_raw = lexer.procesar(linea.strip(), i)
-                tokens = self.limpiar_tokens(tokens_raw)
+        izquierdos = []
+        parser_expr = ParserExpresiones(self.tokens[self.pos:])
+        try:
+            izquierdos.append(parser_expr.parse_primario())
+            self.pos += parser_expr.pos
+            
+            while self.match_valor(','):
+                parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
+                izquierdos.append(parser_expr_der.parse_primario())
+                self.pos += parser_expr_der.pos
                 
-                if not tokens:
-                    continue
+            izquierdo = izquierdos[0]
+            
+            if self.match_valor('='):
+                parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
+                derecho = parser_expr_der.parse_expresion()
+                self.pos += parser_expr_der.pos
+                asig = Asignacion(izquierdo, derecho, linea)
+                if len(izquierdos) > 1:
+                    asig.multiples_izquierdos = izquierdos
+                return asig
                 
-                # Capturar errores sintácticos por separado
-                errores_anteriores = len(self.errores_encontrados)
-                self.validar_sintaxis_go(tokens, i, omitir_balance_simbolos=True)
-                errores_sintacticos_linea = self.errores_encontrados[errores_anteriores:]
-                errores_sintacticos.extend(errores_sintacticos_linea)
+            elif self.match_valor(':='):
+                for izq in izquierdos:
+                    if izq.tipo != "Variable":
+                        self.agregar_error("A la izquierda de ':=' debe haber un identificador válido", linea)
+                        return None
+                    
+                parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
+                derecho = parser_expr_der.parse_expresion()
+                self.pos += parser_expr_der.pos
+                decl = DeclaracionVariable(izquierdo.valor, "inferido", derecho, linea)
+                if len(izquierdos) > 1:
+                    decl.multiples_valores = [izq.valor for izq in izquierdos]
+                return decl
+            
+            elif self.match_valor('++') or self.match_valor('--'):
+                # t_post could be checked before advancing, but match_valor already advanced. 
+                # Let's peek backwards to see what it was:
+                op_val = self.tokens[self.pos-1][1]
+                op = '+' if op_val == '++' else '-'
+                derecho = OperacionBinaria(op, izquierdo, Numero("1", linea), linea)
+                return Asignacion(izquierdo, derecho, linea)
+            
+            elif t_compound := (self.match_tipo('TKN ADDEQ') or self.match_tipo('TKN SUBEQ') or self.match_tipo('TKN MULTEQ') or self.match_tipo('TKN DIVEQ') or self.match_tipo('TKN MODEQ')):
+                # +=, -=, *=, /=, %=
+                parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
+                derecho_expr = parser_expr_der.parse_expresion()
+                self.pos += parser_expr_der.pos
+                op = t_compound[1][0] # Toma el primer caracter (+, -, *, /, %)
+                derecho = OperacionBinaria(op, izquierdo, derecho_expr, linea)
+                return Asignacion(izquierdo, derecho, linea)
+
+            return izquierdo
+            
+        except SyntaxError as e:
+            self.pos = pos_inicial
+            t_err = self.avanzar()
+            self.agregar_error(f"Sintaxis inválida cerca de '{t_err[1]}'", t_err[2])
+            return None
+
+    def parsear_bloque(self):
+        t_llave = self.match_valor('{')
+        if not t_llave: return None
+        linea = t_llave[2]
+        bloque = Bloque(linea)
+        
+        while self.peek() and self.peek()[1] != '}':
+            if self.peek()[1] == ';':
+                self.avanzar()
+                continue
+            
+            sentencia = self.parsear_sentencia()
+            if sentencia:
+                bloque.agregar_hijo(sentencia)
+            else:
+                self.avanzar()
                 
-                # Validar sintaxis específica para switch
-                if tokens and tokens[0][1].lower() == 'switch':
-                    self.validar_sintaxis_switch(tokens, i)
+        t_cierre = self.match_valor('}')
+        if not t_cierre:
+            self.agregar_error("Falta llave de cierre '}'", linea)
+            
+        return bloque
+
+    def parsear_if(self):
+        t_if = self.match_valor('if')
+        linea = t_if[2]
+        
+        cond_tokens = []
+        while self.peek() and self.peek()[1] != '{':
+            cond_tokens.append(self.avanzar())
+            
+        if not cond_tokens:
+            self.agregar_error("Estructura if incompleta, falta condición", linea)
+            return None
+            
+        parser_expr = ParserExpresiones(cond_tokens)
+        try:
+            condicion = parser_expr.parse_expresion()
+        except SyntaxError as e:
+            self.agregar_error(f"Error en condición if: {str(e)}", linea)
+            condicion = None
+            
+        bloque_true = self.parsear_bloque()
+        bloque_false = None
+        
+        if self.match_valor('else'):
+            if self.peek() and self.peek()[1] == 'if':
+                bloque_false = self.parsear_if()
+            elif self.peek() and self.peek()[1] == '{':
+                bloque_false = self.parsear_bloque()
+            else:
+                self.agregar_error("Se esperaba '{' o 'if' después de 'else'", linea)
                 
-                # Capturar errores semánticos por separado
-                errores_semanticos_linea = analizador_semantico.validar_declaracion_variable(tokens, i)
-                errores_semanticos_totales.extend(errores_semanticos_linea)
+        return If(condicion, bloque_true, bloque_false, linea)
+
+    def parsear_for(self):
+        t_for = self.match_valor('for')
+        linea = t_for[2]
+        
+        for_tokens = []
+        while self.peek() and self.peek()[1] != '{':
+            for_tokens.append(self.avanzar())
+            
+        if len(for_tokens) > 0 and for_tokens[0][1] == '(':
+            self.agregar_error("Paréntesis no permitidos en bucle for - Go no usa paréntesis alrededor de las condiciones", linea)
+            
+        for i, token in enumerate(for_tokens):
+            if token[1] == '++':
+                if i < len(for_tokens) - 1 and for_tokens[i+1][0] == 'TKN ID':
+                    if i == 0 or for_tokens[i-1][1] not in ['TKN ID', ')', ']']:
+                        self.agregar_error("Pre-incremento no permitido en Go - use post-incremento (variable++)", linea)
+        
+        num_espacios = sum(1 for t in for_tokens if t[1] == ';')
+        
+        init = None
+        cond = None
+        post = None
+        
+        if num_espacios == 2:
+            partes = []
+            actual = []
+            for t in for_tokens:
+                if t[1] == ';':
+                    partes.append(actual)
+                    actual = []
+                else:
+                    actual.append(t)
+            partes.append(actual)
+            
+            if partes[0]:
+                if any(t[0] == 'TKN COLON' for t in partes[0]):
+                    self.agregar_error("Sintaxis inválida en 'for' - ':' no es válido, use ':='", linea)
+                else:
+                    old_tokens, old_pos = self.tokens, self.pos
+                    self.tokens = partes[0]
+                    self.pos = 0
+                    init = self.parsear_asignacion_o_expresion()
+                    self.tokens, self.pos = old_tokens, old_pos
+
+            if partes[1]:
+                p_cond = ParserExpresiones(partes[1])
+                try:
+                    cond = p_cond.parse_expresion()
+                except SyntaxError:
+                    pass
+                    
+            if partes[2]:
+                old_tokens, old_pos = self.tokens, self.pos
+                self.tokens = partes[2]
+                self.pos = 0
+                post = self.parsear_asignacion_o_expresion()
+                self.tokens, self.pos = old_tokens, old_pos
+
+        elif num_espacios == 0 and len(for_tokens) > 0:
+            p_cond = ParserExpresiones(for_tokens)
+            try:
+                cond = p_cond.parse_expresion()
+            except SyntaxError:
+                pass
+        elif num_espacios != 0:
+            self.agregar_error("Estructura for inválida: se esperan 0 o 2 puntos y comas ';'", linea)
+
+        bloque = self.parsear_bloque()
+        return For(init, cond, post, bloque, linea)
+
+    def parsear_switch(self):
+        t_switch = self.match_valor('switch')
+        linea = t_switch[2]
+        
+        switch_tokens = []
+        while self.peek() and self.peek()[1] != '{':
+            switch_tokens.append(self.avanzar())
+            
+        expresion = None
+        if switch_tokens:
+            p_expr = ParserExpresiones(switch_tokens)
+            try:
+                expresion = p_expr.parse_expresion()
+            except SyntaxError as e:
+                self.agregar_error(f"Error en expresión switch: {str(e)}", linea)
+
+        t_llave = self.match_valor('{')
+        if not t_llave:
+            self.agregar_error("Falta llave de apertura '{' al final del switch", linea)
+            return None
+            
+        casos = []
+        while self.peek() and self.peek()[1] != '}':
+            if self.peek()[1] in ['case', 'default']:
+                casos.append(self.parsear_case())
+            else:
+                t_err = self.avanzar()
+                if t_err[1] != ';':
+                    self.agregar_error(f"Token inesperado '{t_err[1]}' dentro de switch, se esperaba 'case' o 'default'", t_err[2])
+                    
+        self.match_valor('}')
+        return Switch(expresion, casos, linea)
+
+    def parsear_case(self):
+        t = self.avanzar()
+        linea = t[2]
+        es_default = (t[1] == 'default')
+        
+        exprs = []
+        if not es_default:
+            case_tokens = []
+            while self.peek() and self.peek()[1] not in [':', '{']:
+                case_tokens.append(self.avanzar())
                 
-                errores_funcion_linea = analizador_semantico.validar_llamada_funcion(tokens, i)
-                errores_semanticos_totales.extend(errores_funcion_linea)
+            if not case_tokens:
+                self.agregar_error("Case sin expresión", linea)
+            else:
+                for i in range(len(case_tokens) - 1):
+                    ta = case_tokens[i]
+                    tb = case_tokens[i+1]
+                    if ta[0] in ['TKN ID', 'TKN NUM'] and tb[0] in ['TKN ID', 'TKN NUM']:
+                        self.agregar_error(f"Case inválido - falta operador entre '{ta[1]}' y '{tb[1]}'", linea)
+
+                p_expr = ParserExpresiones(case_tokens)
+                try:
+                    exprs.append(p_expr.parse_expresion())
+                except SyntaxError:
+                    pass
+
+        t_colon = self.match_valor(':')
+        if not t_colon:
+            self.agregar_error("Faltan dos puntos ':' al final del case/default", linea)
+            
+        bloque_linea = self.peek()[2] if self.peek() else linea
+        bloque = Bloque(bloque_linea)
+        
+        while self.peek() and self.peek()[1] not in ['case', 'default', '}']:
+            if self.peek()[1] == ';':
+                self.avanzar()
+                continue
+            s = self.parsear_sentencia()
+            if s:
+                bloque.agregar_hijo(s)
                 
-                self.procesar_linea_archivo(tokens, i)
+        return Case(exprs, bloque, es_default, linea)
+
+    def parsear_funcion(self):
+        t_func = self.match_valor('func')
+        linea = t_func[2]
         
-        # Solo guardar errores sintácticos en self.errores_encontrados
-        self.errores_encontrados = errores_sintacticos
+        t_id = self.match_tipo('TKN ID')
+        if not t_id:
+            self.agregar_error("Falta identificador en declaración de función", linea)
+            return None
+            
+        nombre = t_id[1]
         
-        # Guardar errores semánticos en un atributo separado para uso posterior
-        self.errores_semanticos = errores_semanticos_totales
+        t_paren = self.match_valor('(')
+        if not t_paren:
+            self.agregar_error("Faltan paréntesis de apertura en declaración de función", linea)
+            
+        parametros = []
+        while self.peek() and self.peek()[1] != ')':
+            p_id = self.match_tipo('TKN ID')
+            if not p_id:
+                t_err = self.avanzar()
+                self.agregar_error(f"Se esperaba un identificador para el parámetro, se encontró '{t_err[1]}'", linea)
+                break
+                
+            if self.peek() and self.peek()[1] in [',', ')']:
+                self.agregar_error(f"Falta el tipo de dato para el parámetro '{p_id[1]}'", linea)
+                p_tipo = (None, "desconocido", linea)
+            else:
+                p_tipo = self.avanzar()
+                
+            if p_id and p_tipo:
+                parametros.append((p_id[1], p_tipo[1]))
+            
+            if self.peek() and self.peek()[1] == ',':
+                self.avanzar()
+                
+        t_paren_c = self.match_valor(')')
+        if not t_paren_c:
+            self.agregar_error("Faltan paréntesis de cierre en declaración de función", linea)
+            
+        tipo_retorno = None
+        if self.peek() and self.peek()[1] != '{':
+            if self.peek()[1] == '(':
+                tokens_retorno = []
+                while self.peek() and self.peek()[1] != '{':
+                    tokens_retorno.append(self.avanzar()[1])
+                tipo_retorno = "".join(tokens_retorno)
+            else:
+                tipo_retorno = self.avanzar()[1]
+            
+        bloque = self.parsear_bloque()
+        if not bloque:
+            self.agregar_error("Falta llave de apertura en cuerpo de función", linea)
+            
+        return Funcion(nombre, parametros, tipo_retorno, bloque, linea)
+
+    def parsear_return(self):
+        t_ret = self.match_valor('return')
+        linea = t_ret[2]
         
-        self.finalizar_archivo()
+        expr = None
+        if self.peek() and self.peek()[1] not in [';', '}']:
+            expr_tokens = []
+            while self.peek() and self.peek()[1] not in [';', '}']:
+                expr_tokens.append(self.avanzar())
+            if expr_tokens:
+                p_expr = ParserExpresiones(expr_tokens)
+                try:
+                    expr = p_expr.parse_expresion()
+                except SyntaxError as e:
+                    self.agregar_error(f"Error en return: {str(e)}", linea)
         
-        self.errores_encontrados.extend(self.errores_archivo)
-        
-        total_errores = len(self.errores_encontrados) + len(self.errores_semanticos)
-        
-        return total_errores == 0
+        return Return(expr, linea)
