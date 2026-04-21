@@ -135,6 +135,19 @@ class AutomataSemantico:
         
         errores = []
         
+        # Manejar importaciones: import "paquete"
+        if tokens and tokens[0][1] == 'import':
+            if len(tokens) >= 2 and tokens[1][0] == "TKN STRING":
+                paquete = tokens[1][1].strip('"').strip('`')
+                from symbol_table import Simbolo, TipoSimbolo
+                simbolo = Simbolo(paquete, TipoSimbolo.PALABRA_RESERVADA, "import", linea, self.tabla_simbolos.ambito_actual)
+                if not self.tabla_simbolos.existe_simbolo(paquete):
+                    self.tabla_simbolos.agregar_simbolo(simbolo)
+                return errores  # Importación válida, no hay errores
+            else:
+                errores.append(f"Línea {linea}: SEMÁNTICA - Importación inválida, se espera: import \"paquete\"")
+                return errores
+        
         # Ya no se maneja la detección de for aquí, ahora el parser notifica al semantic
         # a través de notificar_bucle_for_detectado()
         
@@ -212,6 +225,14 @@ class AutomataSemantico:
             else:
                 errores.append(f"Línea {linea}: Declaración de constante inválida")
 
+        # Validación semántica de variables en switch
+        if tokens and tokens[0][1].lower() == 'switch':
+            # Validar que la variable del switch esté declarada
+            if len(tokens) >= 3 and tokens[1][0] == 'TKN ID':
+                switch_var = tokens[1][1]
+                if not self.tabla_simbolos.existe_simbolo(switch_var):
+                    errores.append(f"Línea {linea}: SEMÁNTICA - Variable '{switch_var}' no declarada siendo usada en expresión switch")
+        
         # Validación semántica de casos switch duplicados
         if self.en_bloque_switch and any(t[1].lower() == 'case' for t in tokens):
             idx_case = next(i for i, t in enumerate(tokens) if t[1].lower() == 'case')

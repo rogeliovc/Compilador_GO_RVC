@@ -539,6 +539,32 @@ class AnalizadorSintactico:
             contexto = " ".join([t[1] for t in tokens])
             agregar_error_patron("Estructura case incompleta", linea, 0, contexto)
             self.errores_encontrados.append(f"Línea {linea}: Case incompleto")
+            return
+        
+        # Validar la estructura de la expresión del case
+        # Extraer tokens entre 'case' y ':'
+        expresion_tokens = tokens[1:-1]  # Excluir 'case' y ':'
+        
+        if not expresion_tokens:
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Case sin expresión - se espera: case <expresión>:", linea, 0, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Case sin expresión")
+            return
+        
+        # Detectar patrones inválidos: dos identificadores/números consecutivos sin operador
+        for i in range(len(expresion_tokens) - 1):
+            token_actual = expresion_tokens[i]
+            token_siguiente = expresion_tokens[i + 1]
+            
+            # Si ambos son identificadores o números y no hay operador entre ellos
+            if ((token_actual[0] in ['TKN ID', 'TKN NUM', 'TKN STRING'] and 
+                 token_siguiente[0] in ['TKN ID', 'TKN NUM', 'TKN STRING']) and
+                token_siguiente[1] not in [',', '||', '&&']):
+                
+                contexto = " ".join([t[1] for t in tokens])
+                agregar_error_patron(f"Estructura case inválida - falta operador entre '{token_actual[1]}' y '{token_siguiente[1]}'", linea, 0, contexto)
+                self.errores_encontrados.append(f"Línea {linea}: Case inválido - falta operador")
+                return
 
     def validar_sintaxis_default(self, tokens, linea):
         if not tokens or tokens[0][1].lower() != 'default':
@@ -595,6 +621,8 @@ class AnalizadorSintactico:
         if not tokens: return
         
         if tokens[0][1].lower() == 'for':
+            self.notificar_bucle_for(tokens, linea)
+            
             if len(tokens) < 2:
                 contexto = " ".join([t[1] for t in tokens])
                 agregar_error_patron("Estructura for incompleta", linea, 0, contexto)
@@ -670,53 +698,28 @@ class AnalizadorSintactico:
                                 self.errores_encontrados.append(f"Línea {linea}: Sintaxis inválida en 'for' - ':' no es válido, use ':='")
                                 return
                         
-                        cond_tokens = partes[1]
-                        
-                        # Validar patrón =! en la condición (error sintáctico)
-                        for i, token in enumerate(cond_tokens):
-                            if token[1] == '=' and i + 1 < len(cond_tokens) and cond_tokens[i+1][1] == '!':
-                                contexto = " ".join([t[1] for t in tokens])
-                                from errors import agregar_error_patron
-                                agregar_error_patron("Operador inválido '=!' detectado - se esperaba '!=' para desigualdad", linea, 0, contexto)
-                                self.errores_encontrados.append(f"Línea {linea}: ERROR - Operador '=!' inválido, use '!=' para desigualdad")
-                                return
+                        # Validar variables en la condición del for
+                        if len(partes) > 1:
+                            cond_tokens = partes[1]
+                            self.validar_variables_en_expresion(cond_tokens, linea, "condición del for")
                         
                         tercera_parte = partes[2]
-                        # Verificar operadores sueltos sin asignación o sin ser incremento/decremento real
-                        operador_simple = next((t for t in tercera_parte if t[1] in ['+', '-', '*', '/']), None)
-                        tiene_asig = any(t[1] == '=' or t[1] == ':=' for t in tercera_parte)
-                        es_inc_dec = any(t[1] in ['++', '--'] for t in tercera_parte)
-                        
-                        if operador_simple and not tiene_asig and not es_inc_dec:
-                            op = operador_simple[1]
-                            contexto = " ".join([t[1] for t in tokens])
-                            from errors import agregar_error_patron
-                            agregar_error_patron(f"Operador '{op}' incompleto sin operando de cierre en el 'for'", linea, 0, contexto)
-                            self.errores_encontrados.append(f"Línea {linea}: Operador '{op}' incompleto (se esperaba i++, i+=1, etc.)")
-                            return
+                        # La validación de operadores se hace en validar_operadores() de forma centralizada
                     else:
                         # For como while (condición única) o for-range
                         contenido_for = tokens[1:-1]  # Ignorar 'for' y '{'
                         if contenido_for:
-                            # Detectar for-range
                             if any(t[1] == 'range' for t in contenido_for):
-                                # Validar estructura for-range
-                                range_pos = next(i for i, t in enumerate(contenido_for) if t[1] == 'range')
-                                if range_pos == 0:
-                                    contexto = " ".join([t[1] for t in tokens])
-                                    from errors import agregar_error_patron
-                                    agregar_error_patron("Estructura for-range inválida - se requiere: for indice, valor := range coleccion", linea, 0, contexto)
-                                    self.errores_encontrados.append(f"Línea {linea}: Estructura for-range inválida")
-                                    return
-                                elif range_pos > 0:
-                                    # Verificar que antes de range haya una declaración válida
-                                    pre_range = contenido_for[:range_pos]
-                                    if not any(t[1] == ':=' for t in pre_range):
-                                        # for range coleccion (sin variables)
-                                        pass  # Válido
-                                    else:
-                                        # for indice, valor := range coleccion
-                                        pass  # Válido
+                                # Detectar for-range
+                                if contenido_for:
+                                    # Validar estructura for-range
+                                    range_pos = next(i for i, t in enumerate(contenido_for) if t[1] == 'range')
+                                    if range_pos == 0:
+                                        contexto = " ".join([t[1] for t in tokens])
+                                        from errors import agregar_error_patron
+                                        agregar_error_patron("Estructura for-range inválida - se requiere: for indice, valor := range coleccion", linea, 0, contexto)
+                                        self.errores_encontrados.append(f"Línea {linea}: Estructura for-range inválida")
+                                        return
                             else:
                                 # For como while (condición única)
                                 # La condición debe ser una expresión válida
@@ -725,27 +728,80 @@ class AnalizadorSintactico:
                         else:
                             # For infinito (sin componentes) - válido
                             pass
-                        return
-                        
-                    if cond_tokens:
-                        if not any(t[1] == 'range' for t in cond_tokens):
-                            parser_expr = ParserExpresiones(cond_tokens)
-                            parser_expr.parse()
-                    else:
-                        # For infinito (sin condición) - válido
-                        pass
-                        
                 except SyntaxError as e:
                     msg = f"Error de sintaxis en expresión de 'for' -> {str(e)}"
                     from errors import agregar_error_patron
                     agregar_error_patron(msg, linea, 0, " ".join([t[1] for t in tokens]))
                     self.errores_encontrados.append(f"Línea {linea}: {msg}")
+
+    def validar_sintaxis_switch(self, tokens, linea):
+        """Validar sintaxis específica para sentencias switch en Go"""
+        from errors import agregar_error_patron
+        
+        if not tokens or tokens[0][1].lower() != 'switch':
+            return
+        
+        # ERROR: Switch sin llave de apertura
+        if tokens[-1][1] != '{':
+            contexto = " ".join([t[1] for t in tokens])
+            agregar_error_patron("Falta llave de apertura '{' en switch", linea, len(tokens)-1, contexto)
+            self.errores_encontrados.append(f"Línea {linea}: Falta llave en switch")
+            return
+        
+        # Extraer la expresión del switch (si existe)
+        if len(tokens) >= 2 and tokens[1][1] != '{':
+            expresion_switch = tokens[1:-1]  # Todo entre 'switch' y '{'
+            
+            # Validar que la expresión sea sintácticamente válida
+            try:
+                from ast_nodes import ParserExpresiones
+                if expresion_switch:
+                    # Validar variables en la expresión del switch
+                    self.validar_variables_en_expresion(expresion_switch, linea, "expresión del switch")
+                    
+                    # Verificar si hay operadores sin operandos
+                    self.validar_operadores(expresion_switch, linea)
+            except SyntaxError as e:
+                msg = f"Error de sintaxis en expresión de switch -> {str(e)}"
+                agregar_error_patron(msg, linea, 1, " ".join([t[1] for t in expresion_switch]))
+                self.errores_encontrados.append(f"Línea {linea}: {msg}")
+
+    def validar_variables_en_expresion(self, tokens, linea, contexto=""):
+        """Validar si las variables en una expresión están declaradas previamente"""
+        # Esta función reutiliza la lógica del semantic analyzer para verificar variables
+        # Se puede llamar desde el parser para validar expresiones en for y switch
+        if not tokens:
+            return
+            
+        # Buscar variables en la expresión y verificar si están declaradas
+        for i, token in enumerate(tokens):
+            if token[0] == 'TKN ID':
+                var_name = token[1]
+                
+                # Ignorar palabras clave y tipos básicos
+                from utils import KEYWORDS_GO, TIPOS_BASICOS
+                if var_name in KEYWORDS_GO or var_name in TIPOS_BASICOS:
+                    continue
+                
+                # Verificar si la variable está declarada en la tabla de símbolos
+                if hasattr(self, 'semantic_analyzer') and self.semantic_analyzer:
+                    if not self.semantic_analyzer.tabla_simbolos.existe_simbolo(var_name):
+                        from errors import agregar_error_patron
+                        contexto_expresion = " ".join([t[1] for t in tokens])
+                        agregar_error_patron(
+                            f"Variable '{var_name}' no declarada en {contexto}",
+                            linea,
+                            i,
+                            contexto_expresion
+                        )
+                        self.errores_encontrados.append(f"Línea {linea}: Variable '{var_name}' no declarada en {contexto}")
     
     def validar_operadores(self, tokens, linea):
         for i, token in enumerate(tokens):
             valor = token[1]
             
-            if valor in ['+', '-', '*', '/', '+=', '-=', '*=', '/=', '==', '!=', '<', '>', '<=', '>=']:
+            # Validar operadores aritméticos y de comparación
+            if valor in ['+', '-', '*', '/', '+=', '-=', '*=', '/=', '==', '!=', '<', '>', '<=', '>=', '&&', '||']:
                 sin_operando = False
                 
                 if i == 0 or i == len(tokens) - 1:
@@ -765,8 +821,170 @@ class AnalizadorSintactico:
                     )
                     self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
             
+            # Validar operadores lógicos incompletos (& y | individuales)
+            elif valor in ['&', '|']:
+                # En Go, & y | individuales son operadores bit a bit, pero comúnmente se usan incorrectamente
+                # cuando se quiere decir && o ||
+                contexto = " ".join([t[1] for t in tokens])
+                
+                # Verificar si está en un contexto donde típicamente se usarían operadores lógicos
+                if any(palabra in contexto.lower() for palabra in ['if ', 'for ', 'case ', 'return ', '= ', ':=']):
+                    agregar_error_patron(
+                        f"Operador lógico incompleto '{valor}' - se esperaba '&&' u '||'",
+                        linea,
+                        i,
+                        contexto
+                    )
+                    self.errores_encontrados.append(f"Línea {linea}: Operador lógico incompleto '{valor}' - use '&&' u '||'")
+                else:
+                    # Validar que tenga operandos si es operador bit a bit
+                    sin_operando = False
+                    if i == 0 or i == len(tokens) - 1:
+                        sin_operando = True
+                    elif i + 1 < len(tokens):
+                        siguiente = tokens[i+1][1]
+                        if siguiente in [';', '{', '}', ')', ']']:
+                            sin_operando = True
+                    
+                    if sin_operando:
+                        agregar_error_patron(
+                            f"Operador bit a bit '{valor}' sin operando",
+                            linea,
+                            i,
+                            contexto
+                        )
+                        self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
+            
+            # Validar operadores de comparación incompletos
+            elif valor in ['<', '>']:
+                # Verificar si podría ser un operador incompleto como <=, >=
+                contexto = " ".join([t[1] for t in tokens])
+                
+                # Verificar si está en un contexto donde típicamente se usarían comparaciones
+                if any(palabra in contexto.lower() for palabra in ['if ', 'for ', 'case ', 'return ', '= ', ':=']):
+                    # Verificar si el siguiente token podría completar el operador
+                    if i + 1 < len(tokens):
+                        siguiente = tokens[i + 1][1]
+                        if valor == '<' and siguiente == '=':
+                            pass  # Es válido (<=)
+                        elif valor == '>' and siguiente == '=':
+                            pass  # Es válido (>=)
+                        elif siguiente in ['=', '<', '>']:
+                            # Podría ser un operador incompleto
+                            agregar_error_patron(
+                                f"Operador de comparación inválido '{valor}{siguiente}' - se esperaba '<=', '>=', '!=' o '=='",
+                                linea,
+                                i,
+                                contexto
+                            )
+                            self.errores_encontrados.append(f"Línea {linea}: Operador de comparación inválido '{valor}{siguiente}'")
+                        else:
+                            # Operador individual (<, >) en contexto de comparación
+                            agregar_error_patron(
+                                f"Operador de comparación incompleto '{valor}' - se esperaba '<=', '>=', '!=' o '=='",
+                                linea,
+                                i,
+                                contexto
+                            )
+                            self.errores_encontrados.append(f"Línea {linea}: Operador de comparación incompleto '{valor}'")
+                else:
+                    # Validar que tenga operandos si es operador válido en otro contexto
+                    sin_operando = False
+                    if i == 0 or i == len(tokens) - 1:
+                        sin_operando = True
+                    elif i + 1 < len(tokens):
+                        siguiente = tokens[i+1][1]
+                        if siguiente in [';', '{', '}', ')', ']']:
+                            sin_operando = True
+                    
+                    if sin_operando:
+                        agregar_error_patron(
+                            f"Operador '{valor}' sin operando",
+                            linea,
+                            i,
+                            contexto
+                        )
+                        self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
+            
+            # Validar operador NOT (!) por separado
+            elif valor == '!':
+                # En Go, ! es un operador lógico NOT válido por sí solo
+                # Solo es inválido si no tiene operando derecho
+                if i == len(tokens) - 1:
+                    contexto = " ".join([t[1] for t in tokens])
+                    agregar_error_patron(
+                        f"Operador lógico NOT '{valor}' sin operando",
+                        linea,
+                        i,
+                        contexto
+                    )
+                    self.errores_encontrados.append(f"Línea {linea}: Operador NOT '{valor}' sin operando")
+                else:
+                    # Validar que tenga operandos si es operador válido en otro contexto
+                    sin_operando = False
+                    if i == 0 or i == len(tokens) - 1:
+                        sin_operando = True
+                    elif i + 1 < len(tokens):
+                        siguiente = tokens[i+1][1]
+                        if siguiente in [';', '{', '}', ')', ']']:
+                            sin_operando = True
+                    
+                    if sin_operando:
+                        agregar_error_patron(
+                            f"Operador '{valor}' sin operando",
+                            linea,
+                            i,
+                            contexto
+                        )
+                        self.errores_encontrados.append(f"Línea {linea}: Operador '{valor}' sin operando")
+            
+            # Validar operador de asignación incompleto (= individual cuando podría ser ==)
+            elif valor == '=':
+                # Verificar si podría ser una comparación incompleta (==)
+                contexto = " ".join([t[1] for t in tokens])
+                
+                # Verificar si está en un contexto donde típicamente se usarían comparaciones
+                # pero excluir bucles for donde = es válido en post-incremento
+                if any(palabra in contexto.lower() for palabra in ['if ', 'case ', 'return ']):
+                    # Verificar si el siguiente token podría completar el operador
+                    if i + 1 < len(tokens) and tokens[i + 1][1] == '=':
+                        pass  # Es válido (==)
+                    else:
+                        # Podría ser una comparación incompleta
+                        agregar_error_patron(
+                            f"Posible comparación incompleta '{valor}' - se esperaba '==' para comparación",
+                            linea,
+                            i,
+                            contexto
+                        )
+                        self.errores_encontrados.append(f"Línea {linea}: Posible comparación incompleta '{valor}' - use '=='")
+            
             elif valor in ['++', '--']:
                 pass
+        
+        # Detectar falta de operadores lógicos entre identificadores
+        for i in range(len(tokens) - 1):
+            token_actual = tokens[i]
+            token_siguiente = tokens[i + 1]
+            
+            # Si ambos son identificadores o números y no hay operador entre ellos
+            if ((token_actual[0] in ['TKN ID', 'TKN NUM', 'TKN STRING'] and 
+                 token_siguiente[0] in ['TKN ID', 'TKN NUM', 'TKN STRING']) and
+                token_siguiente[1] not in [',', '||', '&&', '+', '-', '*', '/', '==', '!=', '<', '>', '<=', '>=', ';', '{', '}', '(', ')', '[', ']']):
+                
+                # Verificar si estamos en un contexto donde se esperaría un operador lógico
+                contexto_linea = " ".join([t[1] for t in tokens])
+                
+                # Contextos donde típicamente faltan operadores lógicos
+                if any(palabra in contexto_linea.lower() for palabra in ['if ', 'for ', 'case ', 'return ', '= ', ':=']):
+                    contexto = " ".join([t[1] for t in tokens])
+                    agregar_error_patron(
+                        f"Falta operador lógico entre '{token_actual[1]}' y '{token_siguiente[1]}' - se esperaba '&&' u '||'",
+                        linea,
+                        i,
+                        contexto
+                    )
+                    self.errores_encontrados.append(f"Línea {linea}: Falta operador lógico entre '{token_actual[1]}' y '{token_siguiente[1]}'")
     
     def validar_keywords(self, tokens, linea):
         from utils import es_palabra_reservada
@@ -922,19 +1140,14 @@ class AnalizadorSintactico:
                 errores_sintacticos_linea = self.errores_encontrados[errores_anteriores:]
                 errores_sintacticos.extend(errores_sintacticos_linea)
                 
+                # Validar sintaxis específica para switch
+                if tokens and tokens[0][1].lower() == 'switch':
+                    self.validar_sintaxis_switch(tokens, i)
+                
                 # Capturar errores semánticos por separado
                 errores_semanticos_linea = analizador_semantico.validar_declaracion_variable(tokens, i)
                 errores_semanticos_totales.extend(errores_semanticos_linea)
                 
-                # Validar y registrar importaciones directamente
-                if (len(tokens) >= 2 and tokens[0][1] == "import" and tokens[1][0] == "TKN STRING"):
-                    paquete = tokens[1][1].strip('"').strip('`')
-                    from symbol_table import Simbolo, TipoSimbolo
-                    simbolo = Simbolo(paquete, TipoSimbolo.PALABRA_RESERVADA, "import", 0, analizador_semantico.tabla_simbolos.ambito_actual)
-                    if not analizador_semantico.tabla_simbolos.existe_simbolo(paquete):
-                        analizador_semantico.tabla_simbolos.agregar_simbolo(simbolo)
-                
-                # Validar llamadas a función (errores semánticos)
                 errores_funcion_linea = analizador_semantico.validar_llamada_funcion(tokens, i)
                 errores_semanticos_totales.extend(errores_funcion_linea)
                 
@@ -950,6 +1163,6 @@ class AnalizadorSintactico:
         
         self.errores_encontrados.extend(self.errores_archivo)
         
-        total_errores = len(self.errores_encontrados)
+        total_errores = len(self.errores_encontrados) + len(self.errores_semanticos)
         
         return total_errores == 0

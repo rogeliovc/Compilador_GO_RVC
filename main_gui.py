@@ -575,24 +575,47 @@ class CodeEditor:
         
     def on_enter_key(self, event=None):
         """Autoindentación: replica la sangría de la línea anterior"""
-        linea_actual_str = self.text_area.get("insert linestart", "insert lineend")
-        identacion_coincidencia = re.match(r'^(\s+)', linea_actual_str)
+        # Obtener posición actual del cursor
+        cursor_pos = self.text_area.index(tk.INSERT)
+        linea_num = int(cursor_pos.split('.')[0])
+        col_num = int(cursor_pos.split('.')[1])
+        
+        # Obtener línea completa actual
+        linea_actual_str = self.text_area.get(f"{linea_num}.0", f"{linea_num}.end")
+        
+        # Separar parte izquierda y derecha del cursor
+        parte_izquierda = linea_actual_str[:col_num]
+        parte_derecha = linea_actual_str[col_num:]
+        
+        # Calcular indentación basada en la parte izquierda
+        identacion_coincidencia = re.match(r'^(\s+)', parte_izquierda)
         
         espacio_a_insertar = ""
         if identacion_coincidencia:
             espacio_a_insertar = identacion_coincidencia.group(1)
             
-        # Si la línea terminó en {, agregamos sangría extra
-        if linea_actual_str.strip().endswith('{'):
+        # Si la parte izquierda termina en {, agregamos sangría extra
+        if parte_izquierda.strip().endswith('{'):
             espacio_a_insertar += "    "
             
-        if espacio_a_insertar:
-            self.text_area.insert("insert lineend", "\n" + espacio_a_insertar)
-            self.update_line_numbers()
-            self.update_status()
-            self.highlight_syntax()
-            self.highlight_current_line()
-            return "break"
+        # Reemplazar la línea actual con la parte izquierda
+        self.text_area.delete(f"{linea_num}.0", f"{linea_num}.end")
+        self.text_area.insert(f"{linea_num}.0", parte_izquierda)
+        
+        # Insertar nueva línea con indentación y parte derecha
+        nueva_linea = f"\n{espacio_a_insertar}{parte_derecha}"
+        self.text_area.insert("insert", nueva_linea)
+        
+        # Mover cursor al inicio de la parte derecha en la nueva línea
+        nueva_linea_num = linea_num + 1
+        nueva_col = len(espacio_a_insertar)
+        self.text_area.mark_set(tk.INSERT, f"{nueva_linea_num}.{nueva_col}")
+        
+        self.update_line_numbers()
+        self.update_status()
+        self.highlight_syntax()
+        self.highlight_current_line()
+        return "break"
 
     def highlight_current_line(self, event=None):
         self.text_area.tag_remove("CurrentLine", "1.0", tk.END)
