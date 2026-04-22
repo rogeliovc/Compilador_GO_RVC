@@ -41,8 +41,12 @@ class OperacionUnaria(NodoAST):
         self.agregar_hijo(operando)
 
 class LlamadaFuncion(NodoAST):
-    def __init__(self, nombre_funcion, argumentos, linea=0):
-        super().__init__("LlamadaFuncion", nombre_funcion, linea)
+    def __init__(self, expr_funcion, argumentos, linea=0):
+        # Usamos el tipo real del nodo para el valor de depuración
+        nombre = expr_funcion.valor if hasattr(expr_funcion, 'valor') else "func_expr"
+        super().__init__("LlamadaFuncion", nombre, linea)
+        self.expr_funcion = expr_funcion
+        self.agregar_hijo(expr_funcion)
         for arg in argumentos:
             self.agregar_hijo(arg)
 
@@ -215,7 +219,7 @@ class ParserExpresiones:
 
     def parse_unario(self):
         t = self.peek()
-        if t and t[1] in ['-', '!', '++', '--']:
+        if t and t[1] in ['-', '!', '++', '--', '*', '&']:
             self.pos += 1
             linea = t[2] if len(t) > 2 else 0
             operando = self.parse_unario()
@@ -281,16 +285,7 @@ class ParserExpresiones:
                 if not self.match(')'):
                     raise SyntaxError("Falta paréntesis de cierre ')' en llamada a función")
                 
-                if isinstance(nodo, AttributeAccess):
-                    # Simplificación temporal: aplanar a string "fmt.Println"
-                    base_str = nodo.hijos[0].valor if isinstance(nodo.hijos[0], Variable) else "expr"
-                    nombre = f"{base_str}.{nodo.valor}"
-                elif isinstance(nodo, Variable):
-                    nombre = nodo.valor
-                else:
-                    nombre = "func_expr"
-                    
-                nodo = LlamadaFuncion(nombre, args, sig[2] if len(sig)>2 else linea)
+                nodo = LlamadaFuncion(nodo, args, sig[2] if len(sig)>2 else linea)
             else:
                 break
                 

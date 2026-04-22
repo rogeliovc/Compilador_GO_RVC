@@ -62,7 +62,9 @@ class AnalizadorSemanticoAST(ASTVisitor):
         tipo = nodo.tipo_dato
         
         if nodo.hijos and nodo.hijos[0]:
-            self.visit(nodo.hijos[0]) # Visitar la expresión de valor
+            derechos = getattr(nodo, 'multiples_derechos', [nodo.hijos[0]])
+            for d in derechos:
+                self.visit(d)
             
         es_corta = (tipo == "inferido")
         if tipo is None: tipo = "inferido"
@@ -70,6 +72,26 @@ class AnalizadorSemanticoAST(ASTVisitor):
         if not es_tipo_dato(tipo) and tipo != "inferido" and not self.tabla_simbolos.existe_simbolo(tipo):
             self.agregar_error(f"Tipo de dato no reconocido '{tipo}' para la variable '{nombres[0]}'", nodo.linea)
             return
+
+        if tipo != "inferido" and nodo.hijos and nodo.hijos[0]:
+            derechos = getattr(nodo, 'multiples_derechos', [nodo.hijos[0]])
+            for d in derechos:
+                es_puntero_izq = tipo.startswith('*')
+                es_ref_der = isinstance(d, OperacionUnaria) and d.valor == '&'
+                if es_puntero_izq and not es_ref_der and isinstance(d, Variable):
+                    self.agregar_error(f"Incompatibilidad de tipos: no se puede asignar un valor directo a una variable puntero '{tipo}' (falta &)", nodo.linea)
+                elif not es_puntero_izq and es_ref_der:
+                    self.agregar_error(f"Incompatibilidad de tipos: no se puede asignar un puntero (&) a una variable de tipo '{tipo}'", nodo.linea)
+
+        if es_corta:
+            al_menos_una_nueva = False
+            for nombre in nombres:
+                if not self.tabla_simbolos.existe_en_ambito_actual(nombre):
+                    al_menos_una_nueva = True
+                    break
+            if not al_menos_una_nueva:
+                vars_str = ", ".join(nombres)
+                self.agregar_error(f"No hay variables nuevas a la izquierda de ':=' para [{vars_str}]", nodo.linea)
 
         for nombre in nombres:
             if self.tabla_simbolos.existe_en_ambito_actual(nombre):
@@ -83,15 +105,29 @@ class AnalizadorSemanticoAST(ASTVisitor):
 
     def visit_Asignacion(self, nodo):
         izquierdos = getattr(nodo, 'multiples_izquierdos', [nodo.hijos[0]])
-        derecho = nodo.hijos[1]
+        derechos = getattr(nodo, 'multiples_derechos', [nodo.hijos[1]])
         
-        for izquierdo in izquierdos:
+        for i in range(min(len(izquierdos), len(derechos))):
+            izquierdo = izquierdos[i]
+            derecho = derechos[i]
             if isinstance(izquierdo, Variable):
                 if not self.tabla_simbolos.existe_simbolo(izquierdo.valor):
                     self.agregar_error(f"Variable '{izquierdo.valor}' no declarada siendo asignada", nodo.linea)
+                else:
+                    simbolo = self.tabla_simbolos.buscar_simbolo(izquierdo.valor)
+                    tipo_izq = simbolo.tipo_dato if simbolo else "inferido"
+                    if tipo_izq != "inferido":
+                        es_puntero_izq = tipo_izq.startswith('*')
+                        es_ref_der = isinstance(derecho, OperacionUnaria) and derecho.valor == '&'
+                        
+                        if es_puntero_izq and not es_ref_der and isinstance(derecho, Variable):
+                            self.agregar_error(f"Incompatibilidad de tipos: no se puede asignar un valor directo a la variable puntero '{izquierdo.valor}' (falta &)", nodo.linea)
+                        elif not es_puntero_izq and es_ref_der:
+                            self.agregar_error(f"Incompatibilidad de tipos: no se puede asignar un puntero (&) a la variable '{izquierdo.valor}' de tipo '{tipo_izq}'", nodo.linea)
             self.visit(izquierdo)
             
-        self.visit(derecho)
+        for derecho in derechos:
+            self.visit(derecho)
 
     def visit_Variable(self, nodo):
         val = nodo.valor
@@ -107,20 +143,30 @@ class AnalizadorSemanticoAST(ASTVisitor):
                 self.agregar_error(f"Base indefinida '{base.valor}' al intentar acceder a atributo en '{base.valor}.{nodo.valor}'", nodo.linea)
 
     def visit_LlamadaFuncion(self, nodo):
-        objeto_metodo = nodo.valor
+        expr_funcion = getattr(nodo, 'expr_funcion', None)
         
-        if '.' in objeto_metodo:
-            objeto, metodo = objeto_metodo.split('.', 1)
-            if not self.tabla_simbolos.existe_simbolo(objeto):
-                self.agregar_error(f"Paquete '{objeto}' no importado o no existe", nodo.linea)
-            
-            if objeto == "fmt":
-                funciones_fmt_validas = ["Print", "Println", "Printf", "Scan", "Scanln", "Scanf"]
-                if metodo == "Printl":
-                    self.agregar_error(f"Función 'Printl' no existe - se esperaba 'Println'", nodo.linea)
-                elif metodo not in funciones_fmt_validas:
-                    self.agregar_error(f"Función 'fmt.{metodo}' no existe", nodo.linea)
+        if isinstance(expr_funcion, AttributeAccess):
+            base = expr_funcion.hijos[0]
+            metodo = expr_funcion.valor
+            if isinstance(base, Variable):
+                objeto = base.valor
+                if not self.tabla_simbolos.existe_simbolo(objeto):
+                    self.agregar_error(f"Paquete '{objeto}' no importado o no existe", nodo.linea)
+                
+                if objeto == "fmt":
+                    funciones_fmt_validas = ["Print", "Println", "Printf", "Scan", "Scanln", "Scanf"]
+                    if metodo == "Printl":
+                        self.agregar_error(f"Función 'Printl' no existe - se esperaba 'Println'", nodo.linea)
+                    elif metodo not in funciones_fmt_validas:
+                        self.agregar_error(f"Función 'fmt.{metodo}' no existe", nodo.linea)
+        elif isinstance(expr_funcion, Variable):
+            nombre = expr_funcion.valor
+            builtins = {"make", "len", "append", "panic", "print", "println", "recover", "close", "delete", "cap", "complex", "real", "imag", "new"}
+            if nombre not in builtins:
+                if not self.tabla_simbolos.existe_simbolo(nombre):
+                    self.agregar_error(f"Llamada a función no declarada '{nombre}'", nodo.linea)
         
+        # Al llamar a visit_generic, se visitará el nodo expr_funcion y luego los argumentos
         self.visit_generic(nodo)
 
     def visit_For(self, nodo):
@@ -197,8 +243,12 @@ class AnalizadorSemanticoAST(ASTVisitor):
         self.visit_generic(nodo)
 
     def visit_OperacionUnaria(self, nodo):
+        if nodo.valor == '*':
+            if isinstance(nodo.hijos[0], Variable):
+                simbolo = self.tabla_simbolos.buscar_simbolo(nodo.hijos[0].valor)
+                if simbolo and not simbolo.tipo_dato.startswith('*') and simbolo.tipo_dato != "inferido":
+                    self.agregar_error(f"Operación inválida: no se puede desreferenciar '{nodo.hijos[0].valor}' porque no es un puntero", nodo.linea)
         self.visit_generic(nodo)
-        
     def visit_Numero(self, nodo):
         pass
         

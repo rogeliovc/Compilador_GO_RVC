@@ -32,7 +32,10 @@ def es_identificador_valido(nombre):
     return True
 
 def es_tipo_dato(token):
-    return token in TIPOS_BASICOS
+    if not token:
+        return False
+    token_limpio = token.lstrip('*')
+    return token_limpio in TIPOS_BASICOS
 
 def es_palabra_reservada(token):
     return token in PALABRAS_RESERVADAS

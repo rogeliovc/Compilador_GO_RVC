@@ -1,7 +1,7 @@
 from ast_nodes import (
     Programa, Bloque, DeclaracionVariable, Asignacion, If, For, 
     Switch, Case, Funcion, Return, Import, Numero, OperacionBinaria, Variable,
-    ParserExpresiones
+    ParserExpresiones, LlamadaFuncion
 )
 from errors import agregar_error_patron
 from utils import es_identificador_valido, KEYWORDS_GO
@@ -147,6 +147,25 @@ class AnalizadorSintactico:
                 super().__init__("Package", nombre, linea)
         return Package(nombre, linea)
 
+    def parsear_tipo_dato(self):
+        t = self.peek()
+        if not t: return None
+        
+        tipo = ""
+        while self.peek() and self.peek()[1] == '*':
+            tipo += "*"
+            self.avanzar()
+            
+        t = self.peek()
+        if t and (t[0] == 'TKN ID' or t[1] in ['int', 'float64', 'string', 'bool', 'byte', 'rune', 'any', 'complex128', 'complex64', 'error', 'int16', 'int32', 'int64', 'int8', 'uint', 'uint16', 'uint32', 'uint64', 'uint8', 'uintptr']):
+            tipo += t[1]
+            self.avanzar()
+            return tipo
+            
+        if tipo:
+            self.agregar_error("Se esperaba un tipo base después de '*'", t[2] if t else 0)
+        return None
+
     def parsear_declaracion_var(self):
         t_var = self.match_valor('var')
         linea = t_var[2]
@@ -157,12 +176,7 @@ class AnalizadorSintactico:
             return None
 
         nombre = id_token[1]
-        tipo_dato = None
-
-        t = self.peek()
-        if t and (t[0] in ['TKN ID'] or t[1] in ['int', 'float64', 'string', 'bool']):
-            tipo_dato = t[1]
-            self.avanzar()
+        tipo_dato = self.parsear_tipo_dato()
 
         expresion_valor = None
         
@@ -199,12 +213,21 @@ class AnalizadorSintactico:
             izquierdo = izquierdos[0]
             
             if self.match_valor('='):
+                derechos = []
                 parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
-                derecho = parser_expr_der.parse_expresion()
+                derechos.append(parser_expr_der.parse_expresion())
                 self.pos += parser_expr_der.pos
-                asig = Asignacion(izquierdo, derecho, linea)
+                
+                while self.match_valor(','):
+                    parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
+                    derechos.append(parser_expr_der.parse_expresion())
+                    self.pos += parser_expr_der.pos
+                    
+                asig = Asignacion(izquierdo, derechos[0], linea)
                 if len(izquierdos) > 1:
                     asig.multiples_izquierdos = izquierdos
+                if len(derechos) > 1:
+                    asig.multiples_derechos = derechos
                 return asig
                 
             elif self.match_valor(':='):
@@ -213,12 +236,21 @@ class AnalizadorSintactico:
                         self.agregar_error("A la izquierda de ':=' debe haber un identificador válido", linea)
                         return None
                     
+                derechos = []
                 parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
-                derecho = parser_expr_der.parse_expresion()
+                derechos.append(parser_expr_der.parse_expresion())
                 self.pos += parser_expr_der.pos
-                decl = DeclaracionVariable(izquierdo.valor, "inferido", derecho, linea)
+                
+                while self.match_valor(','):
+                    parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
+                    derechos.append(parser_expr_der.parse_expresion())
+                    self.pos += parser_expr_der.pos
+                    
+                decl = DeclaracionVariable(izquierdo.valor, "inferido", derechos[0], linea)
                 if len(izquierdos) > 1:
                     decl.multiples_valores = [izq.valor for izq in izquierdos]
+                if len(derechos) > 1:
+                    decl.multiples_derechos = derechos
                 return decl
             
             elif self.match_valor('++') or self.match_valor('--'):
@@ -238,6 +270,10 @@ class AnalizadorSintactico:
                 derecho = OperacionBinaria(op, izquierdo, derecho_expr, linea)
                 return Asignacion(izquierdo, derecho, linea)
 
+            if not isinstance(izquierdo, LlamadaFuncion):
+                self.agregar_error("Expresión evaluada pero no utilizada (solo llamadas a funciones o asignaciones son sentencias válidas)", linea)
+                return None
+            
             return izquierdo
             
         except SyntaxError as e:
@@ -284,6 +320,13 @@ class AnalizadorSintactico:
         parser_expr = ParserExpresiones(cond_tokens)
         try:
             condicion = parser_expr.parse_expresion()
+            if parser_expr.pos < len(cond_tokens):
+                t_extra = cond_tokens[parser_expr.pos]
+                if t_extra[1] == '=':
+                    self.agregar_error("Sintaxis inválida en condición: se encontró '=' (asignación) en lugar de '==' (comparación)", linea)
+                else:
+                    self.agregar_error(f"Sintaxis inválida en condición: tokens inesperados '{t_extra[1]}'", linea)
+                condicion = None
         except SyntaxError as e:
             self.agregar_error(f"Error en condición if: {str(e)}", linea)
             condicion = None
@@ -349,6 +392,8 @@ class AnalizadorSintactico:
                 p_cond = ParserExpresiones(partes[1])
                 try:
                     cond = p_cond.parse_expresion()
+                    if p_cond.pos < len(partes[1]):
+                        self.agregar_error(f"Tokens inesperados en condición for: '{partes[1][p_cond.pos][1]}'", linea)
                 except SyntaxError:
                     pass
                     
@@ -363,6 +408,8 @@ class AnalizadorSintactico:
             p_cond = ParserExpresiones(for_tokens)
             try:
                 cond = p_cond.parse_expresion()
+                if p_cond.pos < len(for_tokens):
+                    self.agregar_error(f"Tokens inesperados en condición for: '{for_tokens[p_cond.pos][1]}'", linea)
             except SyntaxError:
                 pass
         elif num_espacios != 0:
@@ -384,6 +431,8 @@ class AnalizadorSintactico:
             p_expr = ParserExpresiones(switch_tokens)
             try:
                 expresion = p_expr.parse_expresion()
+                if p_expr.pos < len(switch_tokens):
+                    self.agregar_error(f"Tokens inesperados en expresión switch: '{switch_tokens[p_expr.pos][1]}'", linea)
             except SyntaxError as e:
                 self.agregar_error(f"Error en expresión switch: {str(e)}", linea)
 
@@ -472,12 +521,16 @@ class AnalizadorSintactico:
                 
             if self.peek() and self.peek()[1] in [',', ')']:
                 self.agregar_error(f"Falta el tipo de dato para el parámetro '{p_id[1]}'", linea)
-                p_tipo = (None, "desconocido", linea)
+                p_tipo = "desconocido"
             else:
-                p_tipo = self.avanzar()
+                p_tipo = self.parsear_tipo_dato()
+                if not p_tipo:
+                    t_err = self.avanzar()
+                    self.agregar_error(f"Tipo de dato inválido para el parámetro '{p_id[1]}'", linea)
+                    p_tipo = "desconocido"
                 
             if p_id and p_tipo:
-                parametros.append((p_id[1], p_tipo[1]))
+                parametros.append((p_id[1], p_tipo))
             
             if self.peek() and self.peek()[1] == ',':
                 self.avanzar()
@@ -489,12 +542,25 @@ class AnalizadorSintactico:
         tipo_retorno = None
         if self.peek() and self.peek()[1] != '{':
             if self.peek()[1] == '(':
-                tokens_retorno = []
-                while self.peek() and self.peek()[1] != '{':
-                    tokens_retorno.append(self.avanzar()[1])
-                tipo_retorno = "".join(tokens_retorno)
+                # Multiples valores de retorno o con nombre
+                self.avanzar()
+                retornos = []
+                while self.peek() and self.peek()[1] != ')':
+                    # Podría ser `nombre tipo` o solo `tipo`. Asumimos solo tipo por simplicidad en Mini-Go
+                    t_ret = self.parsear_tipo_dato()
+                    if t_ret:
+                        retornos.append(t_ret)
+                    else:
+                        self.avanzar() # Consumir token inválido
+                    if self.match_valor(','): continue
+                self.match_valor(')')
+                tipo_retorno = f"({', '.join(retornos)})"
             else:
-                tipo_retorno = self.avanzar()[1]
+                t_ret = self.parsear_tipo_dato()
+                if t_ret:
+                    tipo_retorno = t_ret
+                else:
+                    self.avanzar()
             
         bloque = self.parsear_bloque()
         if not bloque:
@@ -506,7 +572,7 @@ class AnalizadorSintactico:
         t_ret = self.match_valor('return')
         linea = t_ret[2]
         
-        expr = None
+        exprs = []
         if self.peek() and self.peek()[1] not in [';', '}']:
             expr_tokens = []
             while self.peek() and self.peek()[1] not in [';', '}']:
@@ -514,8 +580,18 @@ class AnalizadorSintactico:
             if expr_tokens:
                 p_expr = ParserExpresiones(expr_tokens)
                 try:
-                    expr = p_expr.parse_expresion()
+                    exprs.append(p_expr.parse_expresion())
+                    while p_expr.pos < len(expr_tokens) and expr_tokens[p_expr.pos][1] == ',':
+                        p_expr.pos += 1
+                        exprs.append(p_expr.parse_expresion())
+                        
+                    if p_expr.pos < len(expr_tokens):
+                        t_err = expr_tokens[p_expr.pos]
+                        self.agregar_error(f"Sintaxis inválida cerca de '{t_err[1]}' en return", t_err[2])
                 except SyntaxError as e:
                     self.agregar_error(f"Error en return: {str(e)}", linea)
         
-        return Return(expr, linea)
+        ret_nodo = Return(None, linea)
+        for e in exprs:
+            ret_nodo.agregar_hijo(e)
+        return ret_nodo
