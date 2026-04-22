@@ -862,12 +862,7 @@ class CodeEditor:
         
         # 1. Análisis léxico
         self.results_text.insert(tk.END, "[Fase 1] Análisis Léxico (Tokenizado)\n")
-        lineas = codigo.split('\n')
-        tokens_totales = []
-        for i, linea in enumerate(lineas, 1):
-            if linea.strip():
-                tokens_linea = self.lexer.procesar(linea, i)
-                tokens_totales.extend(tokens_linea)
+        tokens_totales = self.lexer.procesar(codigo)
         
         self.results_text.insert(tk.END, f"  > Total de tokens identificados: {len(tokens_totales)}\n")
         
@@ -967,11 +962,7 @@ class CodeEditor:
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, "=== ÁRBOL DE PARSEO (AST) ===\n\n")
         
-        lineas = codigo.split('\n')
-        tokens_totales = []
-        for i, linea in enumerate(lineas, 1):
-            if linea.strip():
-                tokens_totales.extend(self.lexer.procesar(linea, i))
+        tokens_totales = self.lexer.procesar(codigo)
                 
         arbol = self.parser.parsear_programa(tokens_totales)
         
