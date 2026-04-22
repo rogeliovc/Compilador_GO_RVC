@@ -62,7 +62,7 @@ class AnalizadorLexico:
                         "TKN INC", "TKN DEC", "TKN PAREN_C", "TKN CORCIERRE", "TKN LLAVE_C"
                     }
                     if ultimo_tipo in tokens_asi or ultimo_tipo.replace("TKN ", "").lower() in TIPOS_BASICOS:
-                        resultado.append(("TKN PUNTO_COMA", ";"))
+                        resultado.append(("TKN PUNTO_COMA", ";", linea))
                 linea += 1
                 continue
             
@@ -100,7 +100,7 @@ class AnalizadorLexico:
                     entrada.strip()
                 )
             
-            resultado.append((tipo, valor))
+            resultado.append((tipo, valor, linea))
 
         # Revisar si quedó basura al final del string
         if posicion_actual < len(entrada):
@@ -123,6 +123,6 @@ class AnalizadorLexico:
                 "TKN INC", "TKN DEC", "TKN PAREN_C", "TKN CORCIERRE", "TKN LLAVE_C"
             }
             if ultimo_tipo in tokens_asi or ultimo_tipo.replace("TKN ", "").lower() in TIPOS_BASICOS:
-                resultado.append(("TKN PUNTO_COMA", ";"))
+                resultado.append(("TKN PUNTO_COMA", ";", linea))
         
         return resultado

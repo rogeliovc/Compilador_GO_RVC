@@ -1,49 +1,136 @@
 class NodoAST:
-    def __init__(self, tipo, valor=None):
+    def __init__(self, tipo, valor=None, linea=0):
         self.tipo = tipo
         self.valor = valor
+        self.linea = linea
         self.hijos = []
     
     def agregar_hijo(self, hijo):
-        self.hijos.append(hijo)
+        if hijo is not None:
+            self.hijos.append(hijo)
     
     def __str__(self):
         return f"{self.tipo}: {self.valor}" if self.valor else self.tipo
 
+# --- NODOS DE EXPRESIONES (Devuelven un valor) ---
 class Numero(NodoAST):
-    def __init__(self, valor):
-        super().__init__("Numero", valor)
+    def __init__(self, valor, linea=0):
+        super().__init__("Numero", valor, linea)
 
-class OperacionBinaria(NodoAST):
-    def __init__(self, operador, izquierdo, derecho):
-        super().__init__(self._get_nombre_operacion(operador), operador)
-        self.agregar_hijo(izquierdo)
-        self.agregar_hijo(derecho)
-    
-    def _get_nombre_operacion(self, operador):
-        nombres = {
-            '+': 'Suma',
-            '-': 'Resta',
-            '*': 'Multiplica',
-            '/': 'Divide',
-            '×': 'Multiplica'
-        }
-        return nombres.get(operador, f'Operacion_{operador}')
+class StringLiteral(NodoAST):
+    def __init__(self, valor, linea=0):
+        super().__init__("String", valor, linea)
+
+class BooleanLiteral(NodoAST):
+    def __init__(self, valor, linea=0):
+        super().__init__("Boolean", valor, linea)
 
 class Variable(NodoAST):
-    def __init__(self, nombre):
-        super().__init__("Variable", nombre)
+    def __init__(self, nombre, linea=0):
+        super().__init__("Variable", nombre, linea)
+
+class OperacionBinaria(NodoAST):
+    def __init__(self, operador, izquierdo, derecho, linea=0):
+        super().__init__(f"OpBinaria({operador})", operador, linea)
+        self.agregar_hijo(izquierdo)
+        self.agregar_hijo(derecho)
+
+class OperacionUnaria(NodoAST):
+    def __init__(self, operador, operando, linea=0):
+        super().__init__(f"OpUnaria({operador})", operador, linea)
+        self.agregar_hijo(operando)
+
+class LlamadaFuncion(NodoAST):
+    def __init__(self, expr_funcion, argumentos, linea=0):
+        # Usamos el tipo real del nodo para el valor de depuración
+        nombre = expr_funcion.valor if hasattr(expr_funcion, 'valor') else "func_expr"
+        super().__init__("LlamadaFuncion", nombre, linea)
+        self.expr_funcion = expr_funcion
+        self.agregar_hijo(expr_funcion)
+        for arg in argumentos:
+            self.agregar_hijo(arg)
 
 class AttributeAccess(NodoAST):
-    def __init__(self, base, attr):
-        super().__init__("AttributeAccess", attr)
+    def __init__(self, base, attr, linea=0):
+        super().__init__("AttributeAccess", attr, linea)
         self.agregar_hijo(base)
+
+# --- NODOS DE SENTENCIAS (No devuelven valor, controlan el flujo) ---
+class Programa(NodoAST):
+    def __init__(self, linea=0):
+        super().__init__("Programa", None, linea)
+
+class Bloque(NodoAST):
+    def __init__(self, linea=0):
+        super().__init__("Bloque", None, linea)
+
+class DeclaracionVariable(NodoAST):
+    def __init__(self, nombre, tipo_dato, expresion_valor=None, linea=0):
+        super().__init__("DeclaracionVar", nombre, linea)
+        self.tipo_dato = tipo_dato
+        self.agregar_hijo(expresion_valor)
+
+class Asignacion(NodoAST):
+    def __init__(self, identificador, expresion, linea=0):
+        super().__init__("Asignacion", "=", linea)
+        self.agregar_hijo(identificador)
+        self.agregar_hijo(expresion)
+
+class If(NodoAST):
+    def __init__(self, condicion, bloque_true, bloque_false=None, linea=0):
+        super().__init__("If", None, linea)
+        self.agregar_hijo(condicion)
+        self.agregar_hijo(bloque_true)
+        if bloque_false:
+            self.agregar_hijo(bloque_false)
+
+class For(NodoAST):
+    def __init__(self, init, condicion, post, bloque, linea=0):
+        super().__init__("For", None, linea)
+        self.agregar_hijo(init)
+        self.agregar_hijo(condicion)
+        self.agregar_hijo(post)
+        self.agregar_hijo(bloque)
+
+class Switch(NodoAST):
+    def __init__(self, expresion, casos, linea=0):
+        super().__init__("Switch", None, linea)
+        self.agregar_hijo(expresion)
+        for caso in casos:
+            self.agregar_hijo(caso)
+
+class Case(NodoAST):
+    def __init__(self, expresiones, bloque, es_default=False, linea=0):
+        super().__init__("Case", "default" if es_default else "case", linea)
+        self.es_default = es_default
+        for expr in (expresiones or []):
+            self.agregar_hijo(expr)
+        self.agregar_hijo(bloque)
+
+class Funcion(NodoAST):
+    def __init__(self, nombre, parametros, tipo_retorno, bloque, linea=0):
+        super().__init__("Funcion", nombre, linea)
+        # parametros podría ser una lista de tuplas (nombre, tipo) que guardamos en propiedades
+        self.parametros = parametros
+        self.tipo_retorno = tipo_retorno
+        self.agregar_hijo(bloque)
+
+class Return(NodoAST):
+    def __init__(self, expresion=None, linea=0):
+        super().__init__("Return", None, linea)
+        if expresion:
+            self.agregar_hijo(expresion)
+
+class Import(NodoAST):
+    def __init__(self, paquete, linea=0):
+        super().__init__("Import", paquete, linea)
 
 class ParserExpresiones:
     def __init__(self, tokens):
-        # Ignorar posibles espacios residuales o tokens no esenciales
+        # Ignoramos espacios y saltos de línea al parsear expresiones
+        # Note: now tokens are (tipo, valor, linea)
         self.tokens = [t for t in tokens if t[1] not in [' ', '\n', '\t', ';', '{']]
-        self.pos: int = 0
+        self.pos = 0
 
     def peek(self):
         if self.pos < len(self.tokens):
@@ -63,81 +150,143 @@ class ParserExpresiones:
         nodo = self.parse_expresion()
         if self.pos < len(self.tokens):
             t_sobrante = self.tokens[self.pos][1]
-            raise SyntaxError(f"Token (operador o variable) inesperado '{t_sobrante}' en la expresión")
+            linea = self.tokens[self.pos][2] if len(self.tokens[self.pos]) > 2 else 0
+            raise SyntaxError(f"Token inesperado '{t_sobrante}' al final de la expresión")
         return nodo
 
+    # --- INICIO DE NIVELES DE PRECEDENCIA ---
+
     def parse_expresion(self):
-        nodo = self.parse_primario()
-        
-        while self.peek():
-            op = self.peek()
-            # Lista de operadores soportados por nuestro AST binario
-            operadores_validos = [
-                '+', '-', '*', '/', '%', 
-                '<', '>', '<=', '>=', '==', '!=', 
-                '&&', '||', '=', '.'
-            ]
-            if op[1] in operadores_validos:
-                self.pos += 1
-                der = self.parse_primario()
-                nodo = OperacionBinaria(op[1], nodo, der)
-            else:
-                break
+        return self.parse_or()
+
+    def parse_or(self):
+        nodo = self.parse_and()
+        while self.peek() and self.peek()[1] == '||':
+            op = self.match('||')
+            linea = op[2] if len(op) > 2 else 0
+            der = self.parse_and()
+            nodo = OperacionBinaria(op[1], nodo, der, linea)
         return nodo
+
+    def parse_and(self):
+        nodo = self.parse_igualdad()
+        while self.peek() and self.peek()[1] == '&&':
+            op = self.match('&&')
+            linea = op[2] if len(op) > 2 else 0
+            der = self.parse_igualdad()
+            nodo = OperacionBinaria(op[1], nodo, der, linea)
+        return nodo
+
+    def parse_igualdad(self):
+        nodo = self.parse_comparacion()
+        while self.peek() and self.peek()[1] in ['==', '!=']:
+            op = self.peek()
+            self.pos += 1
+            linea = op[2] if len(op) > 2 else 0
+            der = self.parse_comparacion()
+            nodo = OperacionBinaria(op[1], nodo, der, linea)
+        return nodo
+
+    def parse_comparacion(self):
+        nodo = self.parse_termino()
+        while self.peek() and self.peek()[1] in ['<', '>', '<=', '>=']:
+            op = self.peek()
+            self.pos += 1
+            linea = op[2] if len(op) > 2 else 0
+            der = self.parse_termino()
+            nodo = OperacionBinaria(op[1], nodo, der, linea)
+        return nodo
+
+    def parse_termino(self):
+        nodo = self.parse_factor()
+        while self.peek() and self.peek()[1] in ['+', '-']:
+            op = self.peek()
+            self.pos += 1
+            linea = op[2] if len(op) > 2 else 0
+            der = self.parse_factor()
+            nodo = OperacionBinaria(op[1], nodo, der, linea)
+        return nodo
+
+    def parse_factor(self):
+        nodo = self.parse_unario()
+        while self.peek() and self.peek()[1] in ['*', '/', '%']:
+            op = self.peek()
+            self.pos += 1
+            linea = op[2] if len(op) > 2 else 0
+            der = self.parse_unario()
+            nodo = OperacionBinaria(op[1], nodo, der, linea)
+        return nodo
+
+    def parse_unario(self):
+        t = self.peek()
+        if t and t[1] in ['-', '!', '++', '--', '*', '&']:
+            self.pos += 1
+            linea = t[2] if len(t) > 2 else 0
+            operando = self.parse_unario()
+            return OperacionUnaria(t[1], operando, linea)
+        return self.parse_primario()
 
     def parse_primario(self):
         t = self.peek()
         if not t:
             raise SyntaxError("Se esperaba una expresión o valor")
             
+        linea = t[2] if len(t) > 2 else 0
+        nodo = None
+        
+        # Paréntesis
         if t[1] == '(':
             self.pos += 1
             nodo = self.parse_expresion()
             if not self.match(')'):
-                raise SyntaxError("Falta paréntesis de cierre ')' en la expresión")
-            return nodo
+                raise SyntaxError("Falta paréntesis de cierre ')'")
             
-        if t[0] in ['TKN DEC', 'TKN FLO'] or t[1].replace('.', '', 1).isdigit():
+        # Literales Numéricos
+        elif t[0] in ['TKN NUM', 'TKN DEC', 'TKN FLO'] or t[1].replace('.', '', 1).isdigit():
             self.pos += 1
-            return Numero(t[1])
+            nodo = Numero(t[1], linea)
             
-        if t[0] in ['TKN_STRING', 'TKN COMILLA'] or '"' in t[1] or "'" in t[1] or '`' in t[1]:
+        # Literales String
+        elif t[0] in ['TKN STRING', 'TKN COMILLA'] or '"' in t[1] or "'" in t[1] or '`' in t[1]:
             self.pos += 1
-            return NodoAST('String', t[1])
+            nodo = StringLiteral(t[1], linea)
             
-        if t[1] in ['true', 'false', 'nil']:
+        # Literales Booleanos / Nil
+        elif t[1] in ['true', 'false', 'nil']:
             self.pos += 1
-            return NodoAST('Boolean', t[1])
+            nodo = BooleanLiteral(t[1], linea)
             
-        if t[0] == 'TKN ID' or t[1].isidentifier():
+        # Identificadores (Variables, Atributos, Llamadas a Funciones)
+        elif t[0] == 'TKN ID' or t[1].isidentifier():
             self.pos += 1
+            nodo = Variable(t[1], linea)
             
-            if '.' in t[1]:
-                parts = t[1].split('.')
-                nodo = Variable(parts[0])
-                for part in parts[1:]:
-                    nodo = AttributeAccess(nodo, part)
-            else:
-                nodo = Variable(t[1])
+        if not nodo:
+            raise SyntaxError(f"Se esperaba una expresión válida pero se encontró '{t[1]}'")
             
-            if self.match('('):
-                nodo_llamada = NodoAST('LlamadaFuncion', t[1])
+        # Procesar sufijos (accesos a atributos y llamadas a función)
+        while self.peek():
+            sig = self.peek()
+            if sig[1] == '.':
+                self.pos += 1
+                attr = self.peek()
+                if attr and (attr[0] == 'TKN ID' or attr[1].isidentifier()):
+                    self.pos += 1
+                    nodo = AttributeAccess(nodo, attr[1], sig[2] if len(sig)>2 else linea)
+                else:
+                    raise SyntaxError("Se esperaba un identificador después de '.'")
+            elif sig[1] == '(':
+                self.pos += 1
+                args = []
                 while self.peek() and self.peek()[1] != ')':
-                    arg = self.parse_expresion()
-                    nodo_llamada.agregar_hijo(arg)
-                    if self.match(','):
-                        continue
-                    else:
+                    args.append(self.parse_expresion())
+                    if not self.match(','):
                         break
                 if not self.match(')'):
                     raise SyntaxError("Falta paréntesis de cierre ')' en llamada a función")
-                return nodo_llamada
                 
-            return nodo
-            
-        if t[1] in ['-', '!', '++', '--']:
-            self.pos += 1
-            nodo = self.parse_primario()
-            return NodoAST('Unario_' + t[1], nodo)
-            
-        raise SyntaxError(f"Se esperaba una expresión válida pero se encontró '{t[1]}'")
+                nodo = LlamadaFuncion(nodo, args, sig[2] if len(sig)>2 else linea)
+            else:
+                break
+                
+        return nodo
