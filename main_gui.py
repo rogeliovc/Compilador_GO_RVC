@@ -946,7 +946,7 @@ class CodeEditor:
         self.results_text.insert(tk.END, "=== ANÁLISIS LÉXICO ===\n\n")
         
         tokens = self.lexer.procesar(codigo)
-        for tipo, valor in tokens:
+        for tipo, valor, linea in tokens:
             self.results_text.insert(tk.END, f"<{tipo}, '{valor}'>\n")
         
         self.status_label.config(text="Análisis léxico completado")
