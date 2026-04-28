@@ -31,10 +31,14 @@ def es_identificador_valido(nombre):
         return False
     return True
 
+import re
+
 def es_tipo_dato(token):
     if not token:
         return False
-    token_limpio = token.lstrip('*')
+    # Remover todos los corchetes y números internos, por ej. [5], [3][3], []
+    token_limpio = re.sub(r'\[.*?\]', '', token)
+    token_limpio = token_limpio.lstrip('*')
     return token_limpio in TIPOS_BASICOS
 
 def es_palabra_reservada(token):

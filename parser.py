@@ -1,7 +1,7 @@
 from ast_nodes import (
     Programa, Bloque, DeclaracionVariable, Asignacion, If, For, 
     Switch, Case, Funcion, Return, Import, Numero, OperacionBinaria, Variable,
-    ParserExpresiones, LlamadaFuncion
+    ParserExpresiones, LlamadaFuncion, Break, Continue, ArrayAccess
 )
 from errors import agregar_error_patron
 from utils import es_identificador_valido, KEYWORDS_GO
@@ -81,6 +81,15 @@ class AnalizadorSintactico:
                 sentencia = self.parsear_sentencia()
                 if sentencia:
                     programa.agregar_hijo(sentencia)
+                    
+                    # Validar terminación de sentencia (ASI inserta ; implícitos)
+                    t_sig = self.peek()
+                    if t_sig and t_sig[1] not in [';', '}']:
+                        self.agregar_error(f"Sintaxis inválida: las sentencias deben estar separadas por ';' o salto de línea (encontrado '{t_sig[1]}')", t_sig[2])
+                        # Avanzar para recuperar de pánico
+                        while self.peek() and self.peek()[1] not in [';', '}']:
+                            self.avanzar()
+                            
             except SyntaxError as e:
                 t = self.peek()
                 linea = t[2] if t else 0
@@ -112,6 +121,10 @@ class AnalizadorSintactico:
             return self.parsear_import()
         elif valor == 'package':
             return self.parsear_package()
+        elif valor == 'break':
+            return self.parsear_break()
+        elif valor == 'continue':
+            return self.parsear_continue()
         elif valor == '{':
             return self.parsear_bloque()
         else:
@@ -156,6 +169,20 @@ class AnalizadorSintactico:
             tipo += "*"
             self.avanzar()
             
+        while self.peek() and self.peek()[1] == '[':
+            self.avanzar()
+            t_len = self.peek()
+            if t_len and t_len[0] in ['TKN NUM', 'TKN ID']:
+                tipo += f"[{t_len[1]}]"
+                self.avanzar()
+            else:
+                tipo += "[]"
+                
+            if self.peek() and self.peek()[1] == ']':
+                self.avanzar()
+            else:
+                self.agregar_error("Se esperaba ']' en tipo arreglo", t[2] if t else 0)
+            
         t = self.peek()
         if t and (t[0] == 'TKN ID' or t[1] in ['int', 'float64', 'string', 'bool', 'byte', 'rune', 'any', 'complex128', 'complex64', 'error', 'int16', 'int32', 'int64', 'int8', 'uint', 'uint16', 'uint32', 'uint64', 'uint8', 'uintptr']):
             tipo += t[1]
@@ -163,7 +190,7 @@ class AnalizadorSintactico:
             return tipo
             
         if tipo:
-            self.agregar_error("Se esperaba un tipo base después de '*'", t[2] if t else 0)
+            self.agregar_error("Se esperaba un tipo base después de modificadores de tipo", t[2] if t else 0)
         return None
 
     def parsear_declaracion_var(self):
@@ -270,8 +297,8 @@ class AnalizadorSintactico:
                 derecho = OperacionBinaria(op, izquierdo, derecho_expr, linea)
                 return Asignacion(izquierdo, derecho, linea)
 
-            if not isinstance(izquierdo, LlamadaFuncion):
-                self.agregar_error("Expresión evaluada pero no utilizada (solo llamadas a funciones o asignaciones son sentencias válidas)", linea)
+            if not isinstance(izquierdo, (LlamadaFuncion, ArrayAccess)):
+                self.agregar_error("Expresión inválida", linea)
                 return None
             
             return izquierdo
@@ -296,6 +323,13 @@ class AnalizadorSintactico:
             sentencia = self.parsear_sentencia()
             if sentencia:
                 bloque.agregar_hijo(sentencia)
+                
+                # Validar terminación de sentencia
+                t_sig = self.peek()
+                if t_sig and t_sig[1] not in [';', '}']:
+                    self.agregar_error(f"Sintaxis inválida: las sentencias deben estar separadas por ';' o salto de línea (encontrado '{t_sig[1]}')", t_sig[2])
+                    while self.peek() and self.peek()[1] not in [';', '}']:
+                        self.avanzar()
             else:
                 self.avanzar()
                 
@@ -317,19 +351,42 @@ class AnalizadorSintactico:
             self.agregar_error("Estructura if incompleta, falta condición", linea)
             return None
             
-        parser_expr = ParserExpresiones(cond_tokens)
-        try:
-            condicion = parser_expr.parse_expresion()
-            if parser_expr.pos < len(cond_tokens):
-                t_extra = cond_tokens[parser_expr.pos]
-                if t_extra[1] == '=':
-                    self.agregar_error("Sintaxis inválida en condición: se encontró '=' (asignación) en lugar de '==' (comparación)", linea)
-                else:
-                    self.agregar_error(f"Sintaxis inválida en condición: tokens inesperados '{t_extra[1]}'", linea)
+        init_stmt = None
+        condicion = None
+        
+        semicolon_idx = -1
+        for i, t in enumerate(cond_tokens):
+            if t[1] == ';':
+                semicolon_idx = i
+                break
+                
+        if semicolon_idx != -1:
+            init_tokens = cond_tokens[:semicolon_idx]
+            cond_tokens = cond_tokens[semicolon_idx+1:]
+            
+            old_tokens, old_pos = self.tokens, self.pos
+            self.tokens = init_tokens
+            self.pos = 0
+            init_stmt = self.parsear_asignacion_o_expresion()
+            self.tokens, self.pos = old_tokens, old_pos
+            
+        if not cond_tokens:
+            self.agregar_error("Falta condición en el if", linea)
+            
+        if cond_tokens:
+            parser_expr = ParserExpresiones(cond_tokens)
+            try:
+                condicion = parser_expr.parse_expresion()
+                if parser_expr.pos < len(cond_tokens):
+                    t_extra = cond_tokens[parser_expr.pos]
+                    if t_extra[1] == '=':
+                        self.agregar_error("Sintaxis inválida en condición: se encontró '=' (asignación) en lugar de '==' (comparación)", linea)
+                    else:
+                        self.agregar_error(f"Sintaxis inválida en condición: tokens inesperados '{t_extra[1]}'", linea)
+                    condicion = None
+            except SyntaxError as e:
+                self.agregar_error(f"Error en condición if: {str(e)}", linea)
                 condicion = None
-        except SyntaxError as e:
-            self.agregar_error(f"Error en condición if: {str(e)}", linea)
-            condicion = None
             
         bloque_true = self.parsear_bloque()
         bloque_false = None
@@ -342,7 +399,7 @@ class AnalizadorSintactico:
             else:
                 self.agregar_error("Se esperaba '{' o 'if' después de 'else'", linea)
                 
-        return If(condicion, bloque_true, bloque_false, linea)
+        return If(condicion, bloque_true, bloque_false, linea, init_stmt)
 
     def parsear_for(self):
         t_for = self.match_valor('for')
@@ -394,8 +451,8 @@ class AnalizadorSintactico:
                     cond = p_cond.parse_expresion()
                     if p_cond.pos < len(partes[1]):
                         self.agregar_error(f"Tokens inesperados en condición for: '{partes[1][p_cond.pos][1]}'", linea)
-                except SyntaxError:
-                    pass
+                except SyntaxError as e:
+                    self.agregar_error(f"Error en condición for: {str(e)}", linea)
                     
             if partes[2]:
                 old_tokens, old_pos = self.tokens, self.pos
@@ -410,8 +467,8 @@ class AnalizadorSintactico:
                 cond = p_cond.parse_expresion()
                 if p_cond.pos < len(for_tokens):
                     self.agregar_error(f"Tokens inesperados en condición for: '{for_tokens[p_cond.pos][1]}'", linea)
-            except SyntaxError:
-                pass
+            except SyntaxError as e:
+                self.agregar_error(f"Error en condición for: {str(e)}", linea)
         elif num_espacios != 0:
             self.agregar_error("Estructura for inválida: se esperan 0 o 2 puntos y comas ';'", linea)
 
@@ -461,23 +518,37 @@ class AnalizadorSintactico:
         exprs = []
         if not es_default:
             case_tokens = []
-            while self.peek() and self.peek()[1] not in [':', '{']:
+            while self.peek() and self.peek()[1] not in [':', '{', 'case', 'default']:
                 case_tokens.append(self.avanzar())
                 
             if not case_tokens:
                 self.agregar_error("Case sin expresión", linea)
             else:
-                for i in range(len(case_tokens) - 1):
-                    ta = case_tokens[i]
-                    tb = case_tokens[i+1]
-                    if ta[0] in ['TKN ID', 'TKN NUM'] and tb[0] in ['TKN ID', 'TKN NUM']:
-                        self.agregar_error(f"Case inválido - falta operador entre '{ta[1]}' y '{tb[1]}'", linea)
-
-                p_expr = ParserExpresiones(case_tokens)
-                try:
-                    exprs.append(p_expr.parse_expresion())
-                except SyntaxError:
-                    pass
+                current_expr_tokens = []
+                for tk in case_tokens:
+                    if tk[1] == ',':
+                        if current_expr_tokens:
+                            p_expr = ParserExpresiones(current_expr_tokens)
+                            try:
+                                expr = p_expr.parse_expresion()
+                                if p_expr.pos < len(current_expr_tokens):
+                                    self.agregar_error(f"Tokens inesperados en expresión case: '{current_expr_tokens[p_expr.pos][1]}'", linea)
+                                exprs.append(expr)
+                            except SyntaxError as e:
+                                self.agregar_error(f"Error en expresión case: {str(e)}", linea)
+                            current_expr_tokens = []
+                    else:
+                        current_expr_tokens.append(tk)
+                        
+                if current_expr_tokens:
+                    p_expr = ParserExpresiones(current_expr_tokens)
+                    try:
+                        expr = p_expr.parse_expresion()
+                        if p_expr.pos < len(current_expr_tokens):
+                            self.agregar_error(f"Tokens inesperados en expresión case: '{current_expr_tokens[p_expr.pos][1]}'", linea)
+                        exprs.append(expr)
+                    except SyntaxError as e:
+                        self.agregar_error(f"Error en expresión case: {str(e)}", linea)
 
         t_colon = self.match_valor(':')
         if not t_colon:
@@ -595,3 +666,11 @@ class AnalizadorSintactico:
         for e in exprs:
             ret_nodo.agregar_hijo(e)
         return ret_nodo
+
+    def parsear_break(self):
+        t = self.match_valor('break')
+        return Break(t[2])
+
+    def parsear_continue(self):
+        t = self.match_valor('continue')
+        return Continue(t[2])

@@ -43,7 +43,7 @@ class AnalizadorSemanticoAST(ASTVisitor):
 
     def visit_Package(self, nodo):
         paquete = nodo.valor
-        simbolo = Simbolo(f"pkg_{paquete}", TipoSimbolo.PALABRA_RESERVADA, "package", nodo.linea, self.tabla_simbolos.ambito_actual)
+        simbolo = Simbolo(f"pkg_{paquete}", TipoSimbolo.PALABRA_RESERVADA, "package", nodo.linea, self.tabla_simbolos.ambito_actual, self.tabla_simbolos.scope_id_actual)
         if not self.tabla_simbolos.existe_simbolo(f"pkg_{paquete}"):
             self.tabla_simbolos.agregar_simbolo(simbolo)
         else:
@@ -51,7 +51,7 @@ class AnalizadorSemanticoAST(ASTVisitor):
 
     def visit_Import(self, nodo):
         paquete = nodo.valor
-        simbolo = Simbolo(paquete, TipoSimbolo.PALABRA_RESERVADA, "import", nodo.linea, self.tabla_simbolos.ambito_actual)
+        simbolo = Simbolo(paquete, TipoSimbolo.PALABRA_RESERVADA, "import", nodo.linea, self.tabla_simbolos.ambito_actual, self.tabla_simbolos.scope_id_actual)
         if not self.tabla_simbolos.existe_simbolo(paquete):
             self.tabla_simbolos.agregar_simbolo(simbolo)
         else:
@@ -124,6 +124,13 @@ class AnalizadorSemanticoAST(ASTVisitor):
                             self.agregar_error(f"Incompatibilidad de tipos: no se puede asignar un valor directo a la variable puntero '{izquierdo.valor}' (falta &)", nodo.linea)
                         elif not es_puntero_izq and es_ref_der:
                             self.agregar_error(f"Incompatibilidad de tipos: no se puede asignar un puntero (&) a la variable '{izquierdo.valor}' de tipo '{tipo_izq}'", nodo.linea)
+            elif isinstance(izquierdo, ArrayAccess):
+                var_base = izquierdo.hijos[0]
+                while isinstance(var_base, ArrayAccess):
+                    var_base = var_base.hijos[0]
+                if isinstance(var_base, Variable) and not self.tabla_simbolos.existe_simbolo(var_base.valor):
+                    self.agregar_error(f"Variable '{var_base.valor}' no declarada siendo asignada", nodo.linea)
+                    
             self.visit(izquierdo)
             
         for derecho in derechos:
@@ -141,6 +148,22 @@ class AnalizadorSemanticoAST(ASTVisitor):
         if isinstance(base, Variable):
             if not self.tabla_simbolos.existe_simbolo(base.valor):
                 self.agregar_error(f"Base indefinida '{base.valor}' al intentar acceder a atributo en '{base.valor}.{nodo.valor}'", nodo.linea)
+
+    def visit_ArrayAccess(self, nodo):
+        base = nodo.hijos[0]
+        indice = nodo.hijos[1]
+        
+        self.visit(base)
+        self.visit(indice)
+        
+        var_base = base
+        while isinstance(var_base, ArrayAccess):
+            var_base = var_base.hijos[0]
+            
+        if isinstance(var_base, Variable):
+            simbolo = self.tabla_simbolos.buscar_simbolo(var_base.valor)
+            if simbolo and not ('[' in simbolo.tipo_dato):
+                self.agregar_error(f"El símbolo '{var_base.valor}' de tipo '{simbolo.tipo_dato}' no soporta acceso por índice", nodo.linea)
 
     def visit_LlamadaFuncion(self, nodo):
         expr_funcion = getattr(nodo, 'expr_funcion', None)
@@ -169,7 +192,21 @@ class AnalizadorSemanticoAST(ASTVisitor):
         # Al llamar a visit_generic, se visitará el nodo expr_funcion y luego los argumentos
         self.visit_generic(nodo)
 
+    def visit_If(self, nodo):
+        has_init = getattr(nodo, 'init_stmt', None) is not None
+        if has_init:
+            self.tabla_simbolos.entrar_ambito(Ambito.LOCAL)
+            self.visit(nodo.init_stmt)
+            
+        for hijo in nodo.hijos:
+            if hijo != getattr(nodo, 'init_stmt', None):
+                self.visit(hijo)
+                
+        if has_init:
+            self.tabla_simbolos.salir_ambito()
+
     def visit_For(self, nodo):
+        old_for = self.en_bloque_for
         self.en_bloque_for = True
         self.tabla_simbolos.entrar_ambito_for()
         
@@ -180,7 +217,7 @@ class AnalizadorSemanticoAST(ASTVisitor):
         if len(nodo.hijos) > 3: self.visit(nodo.hijos[3])
         
         self.tabla_simbolos.salir_ambito_for()
-        self.en_bloque_for = False
+        self.en_bloque_for = old_for
 
     def visit_Switch(self, nodo):
         old_switch = self.en_bloque_switch
@@ -260,3 +297,11 @@ class AnalizadorSemanticoAST(ASTVisitor):
         
     def visit_Return(self, nodo):
         self.visit_generic(nodo)
+
+    def visit_Break(self, nodo):
+        if not self.en_bloque_for and not self.en_bloque_switch:
+            self.agregar_error("Sentencia 'break' fuera de un ciclo 'for' o bloque 'switch'", nodo.linea)
+            
+    def visit_Continue(self, nodo):
+        if not self.en_bloque_for:
+            self.agregar_error("Sentencia 'continue' fuera de un ciclo 'for'", nodo.linea)

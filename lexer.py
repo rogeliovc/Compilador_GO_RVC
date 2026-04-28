@@ -59,7 +59,8 @@ class AnalizadorLexico:
                     tokens_asi = {
                         "TKN ID", "TKN NUM", "TKN STRING", "TKN BREAK", 
                         "TKN CONTINUE", "TKN FALLTHROUGH", "TKN RETURN", 
-                        "TKN INC", "TKN DEC", "TKN PAREN_C", "TKN CORCIERRE", "TKN LLAVE_C"
+                        "TKN INC", "TKN DEC", "TKN PAREN_C", "TKN CORCIERRE", "TKN LLAVE_C",
+                        "TKN TRUE", "TKN FALSE", "TKN NIL"
                     }
                     if ultimo_tipo in tokens_asi or ultimo_tipo.replace("TKN ", "").lower() in TIPOS_BASICOS:
                         resultado.append(("TKN PUNTO_COMA", ";", linea))
@@ -120,7 +121,8 @@ class AnalizadorLexico:
             tokens_asi = {
                 "TKN ID", "TKN NUM", "TKN STRING", "TKN BREAK", 
                 "TKN CONTINUE", "TKN FALLTHROUGH", "TKN RETURN", 
-                "TKN INC", "TKN DEC", "TKN PAREN_C", "TKN CORCIERRE", "TKN LLAVE_C"
+                "TKN INC", "TKN DEC", "TKN PAREN_C", "TKN CORCIERRE", "TKN LLAVE_C",
+                "TKN TRUE", "TKN FALSE", "TKN NIL"
             }
             if ultimo_tipo in tokens_asi or ultimo_tipo.replace("TKN ", "").lower() in TIPOS_BASICOS:
                 resultado.append(("TKN PUNTO_COMA", ";", linea))

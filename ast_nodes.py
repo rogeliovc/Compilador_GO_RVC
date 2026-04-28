@@ -55,6 +55,12 @@ class AttributeAccess(NodoAST):
         super().__init__("AttributeAccess", attr, linea)
         self.agregar_hijo(base)
 
+class ArrayAccess(NodoAST):
+    def __init__(self, base, indice, linea=0):
+        super().__init__("ArrayAccess", None, linea)
+        self.agregar_hijo(base)
+        self.agregar_hijo(indice)
+
 # --- NODOS DE SENTENCIAS (No devuelven valor, controlan el flujo) ---
 class Programa(NodoAST):
     def __init__(self, linea=0):
@@ -77,8 +83,11 @@ class Asignacion(NodoAST):
         self.agregar_hijo(expresion)
 
 class If(NodoAST):
-    def __init__(self, condicion, bloque_true, bloque_false=None, linea=0):
+    def __init__(self, condicion, bloque_true, bloque_false=None, linea=0, init_stmt=None):
         super().__init__("If", None, linea)
+        self.init_stmt = init_stmt
+        if init_stmt:
+            self.agregar_hijo(init_stmt)
         self.agregar_hijo(condicion)
         self.agregar_hijo(bloque_true)
         if bloque_false:
@@ -120,6 +129,14 @@ class Return(NodoAST):
         super().__init__("Return", None, linea)
         if expresion:
             self.agregar_hijo(expresion)
+
+class Break(NodoAST):
+    def __init__(self, linea=0):
+        super().__init__("Break", "break", linea)
+
+class Continue(NodoAST):
+    def __init__(self, linea=0):
+        super().__init__("Continue", "continue", linea)
 
 class Import(NodoAST):
     def __init__(self, paquete, linea=0):
@@ -286,6 +303,12 @@ class ParserExpresiones:
                     raise SyntaxError("Falta paréntesis de cierre ')' en llamada a función")
                 
                 nodo = LlamadaFuncion(nodo, args, sig[2] if len(sig)>2 else linea)
+            elif sig[1] == '[':
+                self.pos += 1
+                indice = self.parse_expresion()
+                if not self.match(']'):
+                    raise SyntaxError("Falta corchete de cierre ']' en acceso a arreglo")
+                nodo = ArrayAccess(nodo, indice, sig[2] if len(sig)>2 else linea)
             else:
                 break
                 
