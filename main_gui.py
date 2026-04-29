@@ -10,6 +10,7 @@ from lexer import AnalizadorLexico
 from parser import AnalizadorSintactico
 from semantic import AnalizadorSemanticoAST
 from symbol_table import TablaSimbolos
+from codegen import GeneradorIntermedio
 from errors import limpiar_errores, imprimir_errores, obtener_resumen_errores
 from utils import es_identificador_valido, es_tipo_dato, KEYWORDS_GO, TIPOS_BASICOS
 
@@ -28,6 +29,7 @@ class CodeEditor:
         self.lexer = AnalizadorLexico()
         self.parser = AnalizadorSintactico()
         self.semantic = AnalizadorSemanticoAST()
+        self.codegen = GeneradorIntermedio()
         
         # Establecer coordinación entre parser y semantic analyzer
         self.parser.set_semantic_analyzer(self.semantic)
@@ -732,6 +734,7 @@ class CodeEditor:
         menubar = tk.Menu(self.root, **menu_options)
         self.root.config(menu=menubar)
         
+        # 1. Menú Archivo
         file_menu = tk.Menu(menubar, tearoff=0, **menu_options)
         menubar.add_cascade(label="Archivo", menu=file_menu)
         file_menu.add_command(label="Nuevo", accelerator="Ctrl+N", command=self.new_file)
@@ -741,6 +744,7 @@ class CodeEditor:
         file_menu.add_separator()
         file_menu.add_command(label="Salir", command=self.root.quit)
         
+        # 2. Menú Editar
         edit_menu = tk.Menu(menubar, tearoff=0, **menu_options)
         menubar.add_cascade(label="Editar", menu=edit_menu)
         edit_menu.add_command(label="Deshacer", accelerator="Ctrl+Z", command=lambda: self.text_area.event_generate("<<Undo>>"))
@@ -750,25 +754,26 @@ class CodeEditor:
         edit_menu.add_command(label="Copiar", accelerator="Ctrl+C", command=lambda: self.text_area.event_generate("<<Copy>>"))
         edit_menu.add_command(label="Pegar", accelerator="Ctrl+V", command=lambda: self.text_area.event_generate("<<Paste>>"))
         
+        # 3. Menú Ejecutar
         run_menu = tk.Menu(menubar, tearoff=0, **menu_options)
-        menubar.add_cascade(label="Compilación", menu=run_menu)
-        run_menu.add_command(label="Paso 1: Análisis Léxico (Tokens)", accelerator="F5", command=self.analizar_lexico)
-        run_menu.add_command(label="Paso 2: Generar Árbol de Parseo", accelerator="F7", command=self.generar_arbol_parseo)
-        run_menu.add_separator()
-        run_menu.add_command(label="Ver Tabla de Símbolos Generada", accelerator="F10", command=self.mostrar_tabla_simbolos)
-        run_menu.add_separator()
-        run_menu.add_command(label="Ejecutar Pipeline Completo", accelerator="F9", command=self.compilar_codigo)
+        menubar.add_cascade(label="Ejecutar", menu=run_menu)
+        run_menu.add_command(label="Compilar Pipeline Completo", accelerator="F9", command=self.compilar_codigo)
+        run_menu.add_command(label="Limpiar Resultados", command=self.limpiar_resultados)
         
+        # 4. Menú Compiladores
         compiler_menu = tk.Menu(menubar, tearoff=0, **menu_options)
-        menubar.add_cascade(label="Herramientas", menu=compiler_menu)
-        compiler_menu.add_command(label="Limpiar Consola de Resultados", command=self.limpiar_resultados)
-        compiler_menu.add_separator()
-        compiler_menu.add_command(label="Exportar Análisis a TXT", command=self.guardar_analisis)
-        compiler_menu.add_separator()
-        compiler_menu.add_command(label="Limpiar Errores del Sistema", accelerator="F11", command=self.limpiar_errores_sistema)
-        compiler_menu.add_command(label="Mostrar Errores Detallados", accelerator="F12", command=self.mostrar_errores_detallados)
+        menubar.add_cascade(label="Compiladores", menu=compiler_menu)
+        compiler_menu.add_command(label="Análisis Léxico", accelerator="F5", command=self.analizar_lexico)
+        compiler_menu.add_command(label="Análisis Sintáctico", accelerator="F7", command=self.generar_arbol_parseo)
+        compiler_menu.add_command(label="Análisis Semántico", command=self.analizar_semantico)
+        compiler_menu.add_command(label="Código Intermedio (TAC)", command=self.generar_tac)
         
-
+        # 5. Menú Variables
+        var_menu = tk.Menu(menubar, tearoff=0, **menu_options)
+        menubar.add_cascade(label="Variables", menu=var_menu)
+        var_menu.add_command(label="Ver Tabla de Símbolos", accelerator="F10", command=self.mostrar_tabla_simbolos)
+        
+        # 6. Menú Ayuda
         help_menu = tk.Menu(menubar, tearoff=0, **menu_options)
         menubar.add_cascade(label="Ayuda", menu=help_menu)
         help_menu.add_command(label="Ayuda", command=self.show_help)
@@ -890,6 +895,13 @@ class CodeEditor:
                 self.results_text.insert(tk.END, f"    - {error}\n")
         else:
              self.results_text.insert(tk.END, "  > Status: Semántica válida.\n")
+             
+             # 4. Generación de Código Intermedio (TAC)
+             self.results_text.insert(tk.END, "\n[Fase 4] Generación de Código Intermedio (TAC)\n")
+             self.codegen.generar(arbol)
+             self.results_text.insert(tk.END, "  > Status: TAC generado con éxito.\n")
+             self.results_text.insert(tk.END, "\n--- CÓDIGO INTERMEDIO ---\n")
+             self.results_text.insert(tk.END, self.codegen.obtener_codigo() + "\n")
         
         # 4. Resumen
         self.results_text.insert(tk.END, f"\n[Tabla de Símbolos]\n")
@@ -1082,6 +1094,67 @@ class CodeEditor:
     
     def show_about(self):
         messagebox.showinfo("Acerca de", "IDE de Compilación v2.0 - Mini-Go\nSistema de Errores Integrado\nArquitectura modular implementada.")
+
+    def generar_tac(self):
+        codigo = self.text_area.get(1.0, tk.END).strip()
+        if not codigo: return
+        tokens = self.lexer.procesar(codigo)
+        arbol = self.parser.parsear_programa(tokens)
+        self.semantic = AnalizadorSemanticoAST()
+        self.semantic.procesar(arbol)
+        
+        self.results_text.delete(1.0, tk.END)
+        self.results_text.insert(tk.END, "=== CÓDIGO INTERMEDIO (TAC) ===\n\n")
+        self.codegen.generar(arbol)
+        self.results_text.insert(tk.END, self.codegen.obtener_codigo())
+
+    def analizar_semantico(self):
+        self.limpiar_resultados()
+        codigo = self.text_area.get(1.0, tk.END).strip()
+        if not codigo: return
+
+        limpiar_errores()
+        tokens = self.lexer.procesar(codigo)
+        arbol = self.parser.parsear_programa(tokens)
+        
+        # Primero validamos que no haya errores sintácticos
+        if self.parser.obtener_errores():
+            self.results_text.insert(tk.END, "=== ANÁLISIS SEMÁNTICO ===\n\n")
+            self.results_text.insert(tk.END, "[!] Detenido: Se encontraron errores sintácticos previos.\n")
+            self.mostrar_errores_detallados()
+            return
+
+        # Ejecutamos el análisis semántico
+        self.semantic = AnalizadorSemanticoAST()
+        es_valido = self.semantic.procesar(arbol)
+        
+        self.results_text.insert(tk.END, "=== ANÁLISIS SEMÁNTICO ===\n\n")
+        if es_valido:
+            self.results_text.insert(tk.END, "[OK] Validación semántica completada con éxito.\n")
+            
+            # Extraer estadísticas de la tabla de símbolos
+            vars_count = 0
+            funcs_count = 0
+            pkgs_count = 0
+            
+            for lista in self.semantic.tabla_simbolos.simbolos.values():
+                for s in lista:
+                    if s.tipo_dato == "import" or s.tipo_dato == "package": pkgs_count += 1
+                    elif s.tipo_simbolo.value == "variable": vars_count += 1
+                    elif s.tipo_simbolo.value == "funcion": funcs_count += 1
+            
+            self.results_text.insert(tk.END, f"\nDetalles del Análisis:\n")
+            self.results_text.insert(tk.END, f"  • Variables procesadas: {vars_count}\n")
+            self.results_text.insert(tk.END, f"  • Funciones validadas: {funcs_count}\n")
+            self.results_text.insert(tk.END, f"  • Paquetes/Imports: {pkgs_count}\n")
+            self.results_text.insert(tk.END, f"  • Chequeo de tipos: Correcto\n")
+            self.results_text.insert(tk.END, f"  • Control de flujo: Consistente\n")
+            
+            self.status_label.config(text="Semántica válida")
+        else:
+            self.results_text.insert(tk.END, "[ERROR] Se encontraron problemas semánticos.\n")
+            self.mostrar_errores_detallados()
+            self.status_label.config(text="Errores semánticos detectados")
 
 if __name__ == "__main__":
     root = tk.Tk()

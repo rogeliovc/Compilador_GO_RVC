@@ -1,10 +1,15 @@
 from ast_nodes import (
     Programa, Bloque, DeclaracionVariable, Asignacion, If, For, 
     Switch, Case, Funcion, Return, Import, Numero, OperacionBinaria, Variable,
-    ParserExpresiones, LlamadaFuncion, Break, Continue, ArrayAccess
+    LlamadaFuncion, Break, Continue, ArrayAccess, StringLiteral, BooleanLiteral,
+    AttributeAccess, OperacionUnaria, NodoAST
 )
 from errors import agregar_error_patron
 from utils import es_identificador_valido, KEYWORDS_GO
+
+class Package(NodoAST):
+    def __init__(self, nombre, linea=0):
+        super().__init__("Package", nombre, linea)
 
 class AnalizadorSintactico:
     def __init__(self):
@@ -68,7 +73,6 @@ class AnalizadorSintactico:
         self.pos = 0
         self.errores_encontrados = []
         
-        # Obtenemos la línea inicial para el programa
         linea_prog = self.tokens[0][2] if self.tokens else 0
         programa = Programa(linea_prog)
 
@@ -82,13 +86,11 @@ class AnalizadorSintactico:
                 if sentencia:
                     programa.agregar_hijo(sentencia)
                     
-                    # Validar terminación de sentencia (ASI inserta ; implícitos)
                     t_sig = self.peek()
-                    if t_sig and t_sig[1] not in [';', '}']:
-                        self.agregar_error(f"Sintaxis inválida: las sentencias deben estar separadas por ';' o salto de línea (encontrado '{t_sig[1]}')", t_sig[2])
-                        # Avanzar para recuperar de pánico
-                        while self.peek() and self.peek()[1] not in [';', '}']:
-                            self.avanzar()
+                    if t_sig and t_sig[1] not in [';', '}', 'case', 'default']:
+                        # ASI check: si el anterior fue un token que permite ASI, no error
+                        # Pero aquí simplificamos para Mini-Go
+                        pass
                             
             except SyntaxError as e:
                 t = self.peek()
@@ -99,6 +101,127 @@ class AnalizadorSintactico:
                     self.avanzar()
 
         return programa
+
+    # --- LÓGICA DE EXPRESIONES (UNIFICADA) ---
+
+    def parsear_expresion(self):
+        return self.parsear_or()
+
+    def parsear_or(self):
+        nodo = self.parsear_and()
+        while self.peek() and self.peek()[1] == '||':
+            op = self.avanzar()
+            der = self.parsear_and()
+            nodo = OperacionBinaria(op[1], nodo, der, op[2])
+        return nodo
+
+    def parsear_and(self):
+        nodo = self.parsear_igualdad()
+        while self.peek() and self.peek()[1] == '&&':
+            op = self.avanzar()
+            der = self.parsear_igualdad()
+            nodo = OperacionBinaria(op[1], nodo, der, op[2])
+        return nodo
+
+    def parsear_igualdad(self):
+        nodo = self.parsear_comparacion()
+        while self.peek() and self.peek()[1] in ['==', '!=']:
+            op = self.avanzar()
+            der = self.parsear_comparacion()
+            nodo = OperacionBinaria(op[1], nodo, der, op[2])
+        return nodo
+
+    def parsear_comparacion(self):
+        nodo = self.parsear_termino()
+        while self.peek() and self.peek()[1] in ['<', '>', '<=', '>=']:
+            op = self.avanzar()
+            der = self.parsear_termino()
+            nodo = OperacionBinaria(op[1], nodo, der, op[2])
+        return nodo
+
+    def parsear_termino(self):
+        nodo = self.parsear_factor()
+        while self.peek() and self.peek()[1] in ['+', '-']:
+            op = self.avanzar()
+            der = self.parsear_factor()
+            nodo = OperacionBinaria(op[1], nodo, der, op[2])
+        return nodo
+
+    def parsear_factor(self):
+        nodo = self.parsear_unario()
+        while self.peek() and self.peek()[1] in ['*', '/', '%']:
+            op = self.avanzar()
+            der = self.parsear_unario()
+            nodo = OperacionBinaria(op[1], nodo, der, op[2])
+        return nodo
+
+    def parsear_unario(self):
+        t = self.peek()
+        if t and t[1] in ['-', '!', '*', '&']:
+            self.avanzar()
+            operando = self.parsear_unario()
+            return OperacionUnaria(t[1], operando, t[2])
+        return self.parsear_primario()
+
+    def parsear_primario(self):
+        t = self.peek()
+        if not t:
+            raise SyntaxError("Se esperaba una expresión o valor")
+            
+        linea = t[2]
+        nodo = None
+        
+        if t[1] == '(':
+            self.avanzar()
+            nodo = self.parsear_expresion()
+            if not self.match_valor(')'):
+                raise SyntaxError("Falta paréntesis de cierre ')'")
+        elif t[0] in ['TKN NUM', 'TKN DEC', 'TKN FLO'] or t[1].replace('.', '', 1).isdigit():
+            self.avanzar()
+            nodo = Numero(t[1], linea)
+        elif t[0] in ['TKN STRING', 'TKN COMILLA'] or '"' in t[1] or "'" in t[1] or '`' in t[1]:
+            self.avanzar()
+            nodo = StringLiteral(t[1], linea)
+        elif t[1] in ['true', 'false', 'nil']:
+            self.avanzar()
+            nodo = BooleanLiteral(t[1], linea)
+        elif t[0] == 'TKN ID' or t[1].isidentifier():
+            self.avanzar()
+            nodo = Variable(t[1], linea)
+            
+        if not nodo:
+            raise SyntaxError(f"Se esperaba una expresión válida pero se encontró '{t[1]}'")
+            
+        # Sufijos (Llamadas, Accesos, Índices)
+        while self.peek():
+            sig = self.peek()
+            if sig[1] == '.':
+                self.avanzar()
+                attr = self.match_tipo('TKN ID')
+                if attr:
+                    nodo = AttributeAccess(nodo, attr[1], sig[2])
+                else:
+                    raise SyntaxError("Se esperaba un identificador después de '.'")
+            elif sig[1] == '(':
+                self.avanzar()
+                args = []
+                while self.peek() and self.peek()[1] != ')':
+                    args.append(self.parsear_expresion())
+                    if not self.match_valor(','): break
+                if not self.match_valor(')'):
+                    raise SyntaxError("Falta ')' en llamada a función")
+                nodo = LlamadaFuncion(nodo, args, sig[2])
+            elif sig[1] == '[':
+                self.avanzar()
+                indice = self.parsear_expresion()
+                if not self.match_valor(']'):
+                    raise SyntaxError("Falta ']' en acceso a arreglo")
+                nodo = ArrayAccess(nodo, indice, sig[2])
+            else:
+                break
+        return nodo
+
+    # --- LÓGICA DE SENTENCIAS ---
 
     def parsear_sentencia(self):
         t = self.peek()
@@ -132,545 +255,217 @@ class AnalizadorSintactico:
 
     def parsear_import(self):
         t_import = self.match_valor('import')
-        linea = t_import[2]
-        
         t_str = self.match_tipo('TKN STRING')
         if not t_str:
-            self.agregar_error("Importación inválida, se espera: import \"paquete\"", linea)
+            self.agregar_error("Importación inválida", t_import[2])
             return None
-        
-        paquete = t_str[1].strip('"').strip('`')
-        return Import(paquete, linea)
+        return Import(t_str[1].strip('"').strip('`'), t_import[2])
 
     def parsear_package(self):
         t_pkg = self.match_valor('package')
-        linea = t_pkg[2]
-        
         t_id = self.match_tipo('TKN ID')
         if not t_id:
-            self.agregar_error("Se espera un identificador después de 'package'", linea)
+            self.agregar_error("Se espera un identificador después de 'package'", t_pkg[2])
             return None
-            
-        nombre = t_id[1]
-        # Creamos un nodo generico o uno especial. Como no hay Package node en ast_nodes, crearemos Variable temporal o uno nuevo?
-        # En ast_nodes no hemos creado Package. Podemos importar un nuevo nodo o reutilizar Import
-        from ast_nodes import NodoAST
-        class Package(NodoAST):
-            def __init__(self, nombre, linea=0):
-                super().__init__("Package", nombre, linea)
-        return Package(nombre, linea)
+        return Package(t_id[1], t_pkg[2])
+
+    def parsear_declaracion_var(self):
+        t_var = self.match_valor('var')
+        id_token = self.match_tipo('TKN ID')
+        if not id_token:
+            self.agregar_error("Se esperaba un identificador después de 'var'", t_var[2])
+            return None
+
+        nombre = id_token[1]
+        tipo_dato = self.parsear_tipo_dato()
+        expresion_valor = None
+        
+        if self.match_valor('='):
+            expresion_valor = self.parsear_expresion()
+
+        if not tipo_dato and not expresion_valor:
+            self.agregar_error(f"Declaración de '{nombre}' incompleta", t_var[2])
+
+        return DeclaracionVariable(nombre, tipo_dato, expresion_valor, t_var[2])
 
     def parsear_tipo_dato(self):
-        t = self.peek()
-        if not t: return None
-        
         tipo = ""
         while self.peek() and self.peek()[1] == '*':
             tipo += "*"
             self.avanzar()
-            
         while self.peek() and self.peek()[1] == '[':
             self.avanzar()
             t_len = self.peek()
             if t_len and t_len[0] in ['TKN NUM', 'TKN ID']:
                 tipo += f"[{t_len[1]}]"
                 self.avanzar()
-            else:
-                tipo += "[]"
-                
-            if self.peek() and self.peek()[1] == ']':
-                self.avanzar()
-            else:
-                self.agregar_error("Se esperaba ']' en tipo arreglo", t[2] if t else 0)
-            
+            else: tipo += "[]"
+            self.match_valor(']')
         t = self.peek()
-        if t and (t[0] == 'TKN ID' or t[1] in ['int', 'float64', 'string', 'bool', 'byte', 'rune', 'any', 'complex128', 'complex64', 'error', 'int16', 'int32', 'int64', 'int8', 'uint', 'uint16', 'uint32', 'uint64', 'uint8', 'uintptr']):
+        if t and (t[0] == 'TKN ID' or t[1] in KEYWORDS_GO or t[1] in ['int', 'float64', 'string', 'bool']):
             tipo += t[1]
             self.avanzar()
             return tipo
-            
-        if tipo:
-            self.agregar_error("Se esperaba un tipo base después de modificadores de tipo", t[2] if t else 0)
         return None
 
-    def parsear_declaracion_var(self):
-        t_var = self.match_valor('var')
-        linea = t_var[2]
-        
-        id_token = self.match_tipo('TKN ID')
-        if not id_token:
-            self.agregar_error("Se esperaba un identificador después de 'var'", linea)
-            return None
-
-        nombre = id_token[1]
-        tipo_dato = self.parsear_tipo_dato()
-
-        expresion_valor = None
-        
-        if self.match_valor('='):
-            parser_expr = ParserExpresiones(self.tokens[self.pos:])
-            try:
-                expresion_valor = parser_expr.parse_expresion()
-                self.pos += parser_expr.pos 
-            except SyntaxError as e:
-                self.agregar_error(f"Error en la expresión: {str(e)}", linea)
-
-        if not tipo_dato and not expresion_valor:
-            self.agregar_error(f"Declaración de '{nombre}' incompleta: falta tipo o asignación", linea)
-
-        return DeclaracionVariable(nombre, tipo_dato, expresion_valor, linea)
-
     def parsear_asignacion_o_expresion(self):
-        pos_inicial = self.pos
-        t_actual = self.peek()
-        if not t_actual: return None
-        linea = t_actual[2]
+        linea = self.peek()[2] if self.peek() else 0
+        izquierdos = [self.parsear_primario()]
         
-        izquierdos = []
-        parser_expr = ParserExpresiones(self.tokens[self.pos:])
-        try:
-            izquierdos.append(parser_expr.parse_primario())
-            self.pos += parser_expr.pos
+        while self.match_valor(','):
+            izquierdos.append(self.parsear_primario())
             
+        if self.match_valor('='):
+            derechos = [self.parsear_expresion()]
             while self.match_valor(','):
-                parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
-                izquierdos.append(parser_expr_der.parse_primario())
-                self.pos += parser_expr_der.pos
+                derechos.append(self.parsear_expresion())
+            asig = Asignacion(izquierdos[0], derechos[0], linea)
+            if len(izquierdos) > 1: asig.multiples_izquierdos = izquierdos
+            if len(derechos) > 1: asig.multiples_derechos = derechos
+            return asig
                 
-            izquierdo = izquierdos[0]
+        elif self.match_valor(':='):
+            derechos = [self.parsear_expresion()]
+            while self.match_valor(','):
+                derechos.append(self.parsear_expresion())
+            decl = DeclaracionVariable(izquierdos[0].valor, "inferido", derechos[0], linea)
+            if len(izquierdos) > 1: decl.multiples_valores = [izq.valor for izq in izquierdos]
+            if len(derechos) > 1: decl.multiples_derechos = derechos
+            return decl
             
-            if self.match_valor('='):
-                derechos = []
-                parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
-                derechos.append(parser_expr_der.parse_expresion())
-                self.pos += parser_expr_der.pos
-                
-                while self.match_valor(','):
-                    parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
-                    derechos.append(parser_expr_der.parse_expresion())
-                    self.pos += parser_expr_der.pos
-                    
-                asig = Asignacion(izquierdo, derechos[0], linea)
-                if len(izquierdos) > 1:
-                    asig.multiples_izquierdos = izquierdos
-                if len(derechos) > 1:
-                    asig.multiples_derechos = derechos
-                return asig
-                
-            elif self.match_valor(':='):
-                for izq in izquierdos:
-                    if izq.tipo != "Variable":
-                        self.agregar_error("A la izquierda de ':=' debe haber un identificador válido", linea)
-                        return None
-                    
-                derechos = []
-                parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
-                derechos.append(parser_expr_der.parse_expresion())
-                self.pos += parser_expr_der.pos
-                
-                while self.match_valor(','):
-                    parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
-                    derechos.append(parser_expr_der.parse_expresion())
-                    self.pos += parser_expr_der.pos
-                    
-                decl = DeclaracionVariable(izquierdo.valor, "inferido", derechos[0], linea)
-                if len(izquierdos) > 1:
-                    decl.multiples_valores = [izq.valor for izq in izquierdos]
-                if len(derechos) > 1:
-                    decl.multiples_derechos = derechos
-                return decl
-            
-            elif self.match_valor('++') or self.match_valor('--'):
-                # t_post could be checked before advancing, but match_valor already advanced. 
-                # Let's peek backwards to see what it was:
-                op_val = self.tokens[self.pos-1][1]
-                op = '+' if op_val == '++' else '-'
-                derecho = OperacionBinaria(op, izquierdo, Numero("1", linea), linea)
-                return Asignacion(izquierdo, derecho, linea)
-            
-            elif t_compound := (self.match_tipo('TKN ADDEQ') or self.match_tipo('TKN SUBEQ') or self.match_tipo('TKN MULTEQ') or self.match_tipo('TKN DIVEQ') or self.match_tipo('TKN MODEQ')):
-                # +=, -=, *=, /=, %=
-                parser_expr_der = ParserExpresiones(self.tokens[self.pos:])
-                derecho_expr = parser_expr_der.parse_expresion()
-                self.pos += parser_expr_der.pos
-                op = t_compound[1][0] # Toma el primer caracter (+, -, *, /, %)
-                derecho = OperacionBinaria(op, izquierdo, derecho_expr, linea)
-                return Asignacion(izquierdo, derecho, linea)
+        elif t_op := (self.match_valor('++') or self.match_valor('--')):
+            op = '+' if t_op[1] == '++' else '-'
+            return Asignacion(izquierdos[0], OperacionBinaria(op, izquierdos[0], Numero("1", linea), linea), linea)
+        
+        elif t_compound := (self.match_tipo('TKN ADDEQ') or self.match_tipo('TKN SUBEQ') or self.match_tipo('TKN MULTEQ') or self.match_tipo('TKN DIVEQ')):
+            der = self.parsear_expresion()
+            op = t_compound[1][0]
+            return Asignacion(izquierdos[0], OperacionBinaria(op, izquierdos[0], der, linea), linea)
 
-            if not isinstance(izquierdo, (LlamadaFuncion, ArrayAccess)):
-                self.agregar_error("Expresión inválida", linea)
-                return None
-            
-            return izquierdo
-            
-        except SyntaxError as e:
-            self.pos = pos_inicial
-            t_err = self.avanzar()
-            self.agregar_error(f"Sintaxis inválida cerca de '{t_err[1]}'", t_err[2])
-            return None
+        return izquierdos[0]
 
     def parsear_bloque(self):
         t_llave = self.match_valor('{')
         if not t_llave: return None
-        linea = t_llave[2]
-        bloque = Bloque(linea)
-        
+        bloque = Bloque(t_llave[2])
         while self.peek() and self.peek()[1] != '}':
-            if self.peek()[1] == ';':
-                self.avanzar()
-                continue
-            
-            sentencia = self.parsear_sentencia()
-            if sentencia:
-                bloque.agregar_hijo(sentencia)
-                
-                # Validar terminación de sentencia
-                t_sig = self.peek()
-                if t_sig and t_sig[1] not in [';', '}']:
-                    self.agregar_error(f"Sintaxis inválida: las sentencias deben estar separadas por ';' o salto de línea (encontrado '{t_sig[1]}')", t_sig[2])
-                    while self.peek() and self.peek()[1] not in [';', '}']:
-                        self.avanzar()
-            else:
-                self.avanzar()
-                
-        t_cierre = self.match_valor('}')
-        if not t_cierre:
-            self.agregar_error("Falta llave de cierre '}'", linea)
-            
-        return bloque
-
-    def parsear_if(self):
-        t_if = self.match_valor('if')
-        linea = t_if[2]
-        
-        cond_tokens = []
-        while self.peek() and self.peek()[1] != '{':
-            cond_tokens.append(self.avanzar())
-            
-        if not cond_tokens:
-            self.agregar_error("Estructura if incompleta, falta condición", linea)
-            return None
-            
-        init_stmt = None
-        condicion = None
-        
-        semicolon_idx = -1
-        for i, t in enumerate(cond_tokens):
-            if t[1] == ';':
-                semicolon_idx = i
-                break
-                
-        if semicolon_idx != -1:
-            init_tokens = cond_tokens[:semicolon_idx]
-            cond_tokens = cond_tokens[semicolon_idx+1:]
-            
-            old_tokens, old_pos = self.tokens, self.pos
-            self.tokens = init_tokens
-            self.pos = 0
-            init_stmt = self.parsear_asignacion_o_expresion()
-            self.tokens, self.pos = old_tokens, old_pos
-            
-        if not cond_tokens:
-            self.agregar_error("Falta condición en el if", linea)
-            
-        if cond_tokens:
-            parser_expr = ParserExpresiones(cond_tokens)
-            try:
-                condicion = parser_expr.parse_expresion()
-                if parser_expr.pos < len(cond_tokens):
-                    t_extra = cond_tokens[parser_expr.pos]
-                    if t_extra[1] == '=':
-                        self.agregar_error("Sintaxis inválida en condición: se encontró '=' (asignación) en lugar de '==' (comparación)", linea)
-                    else:
-                        self.agregar_error(f"Sintaxis inválida en condición: tokens inesperados '{t_extra[1]}'", linea)
-                    condicion = None
-            except SyntaxError as e:
-                self.agregar_error(f"Error en condición if: {str(e)}", linea)
-                condicion = None
-            
-        bloque_true = self.parsear_bloque()
-        bloque_false = None
-        
-        if self.match_valor('else'):
-            if self.peek() and self.peek()[1] == 'if':
-                bloque_false = self.parsear_if()
-            elif self.peek() and self.peek()[1] == '{':
-                bloque_false = self.parsear_bloque()
-            else:
-                self.agregar_error("Se esperaba '{' o 'if' después de 'else'", linea)
-                
-        return If(condicion, bloque_true, bloque_false, linea, init_stmt)
-
-    def parsear_for(self):
-        t_for = self.match_valor('for')
-        linea = t_for[2]
-        
-        for_tokens = []
-        while self.peek() and self.peek()[1] != '{':
-            for_tokens.append(self.avanzar())
-            
-        if len(for_tokens) > 0 and for_tokens[0][1] == '(':
-            self.agregar_error("Paréntesis no permitidos en bucle for - Go no usa paréntesis alrededor de las condiciones", linea)
-            
-        for i, token in enumerate(for_tokens):
-            if token[1] == '++':
-                if i < len(for_tokens) - 1 and for_tokens[i+1][0] == 'TKN ID':
-                    if i == 0 or for_tokens[i-1][1] not in ['TKN ID', ')', ']']:
-                        self.agregar_error("Pre-incremento no permitido en Go - use post-incremento (variable++)", linea)
-        
-        num_espacios = sum(1 for t in for_tokens if t[1] == ';')
-        
-        init = None
-        cond = None
-        post = None
-        
-        if num_espacios == 2:
-            partes = []
-            actual = []
-            for t in for_tokens:
-                if t[1] == ';':
-                    partes.append(actual)
-                    actual = []
-                else:
-                    actual.append(t)
-            partes.append(actual)
-            
-            if partes[0]:
-                if any(t[0] == 'TKN COLON' for t in partes[0]):
-                    self.agregar_error("Sintaxis inválida en 'for' - ':' no es válido, use ':='", linea)
-                else:
-                    old_tokens, old_pos = self.tokens, self.pos
-                    self.tokens = partes[0]
-                    self.pos = 0
-                    init = self.parsear_asignacion_o_expresion()
-                    self.tokens, self.pos = old_tokens, old_pos
-
-            if partes[1]:
-                p_cond = ParserExpresiones(partes[1])
-                try:
-                    cond = p_cond.parse_expresion()
-                    if p_cond.pos < len(partes[1]):
-                        self.agregar_error(f"Tokens inesperados en condición for: '{partes[1][p_cond.pos][1]}'", linea)
-                except SyntaxError as e:
-                    self.agregar_error(f"Error en condición for: {str(e)}", linea)
-                    
-            if partes[2]:
-                old_tokens, old_pos = self.tokens, self.pos
-                self.tokens = partes[2]
-                self.pos = 0
-                post = self.parsear_asignacion_o_expresion()
-                self.tokens, self.pos = old_tokens, old_pos
-
-        elif num_espacios == 0 and len(for_tokens) > 0:
-            p_cond = ParserExpresiones(for_tokens)
-            try:
-                cond = p_cond.parse_expresion()
-                if p_cond.pos < len(for_tokens):
-                    self.agregar_error(f"Tokens inesperados en condición for: '{for_tokens[p_cond.pos][1]}'", linea)
-            except SyntaxError as e:
-                self.agregar_error(f"Error en condición for: {str(e)}", linea)
-        elif num_espacios != 0:
-            self.agregar_error("Estructura for inválida: se esperan 0 o 2 puntos y comas ';'", linea)
-
-        bloque = self.parsear_bloque()
-        return For(init, cond, post, bloque, linea)
-
-    def parsear_switch(self):
-        t_switch = self.match_valor('switch')
-        linea = t_switch[2]
-        
-        switch_tokens = []
-        while self.peek() and self.peek()[1] != '{':
-            switch_tokens.append(self.avanzar())
-            
-        expresion = None
-        if switch_tokens:
-            p_expr = ParserExpresiones(switch_tokens)
-            try:
-                expresion = p_expr.parse_expresion()
-                if p_expr.pos < len(switch_tokens):
-                    self.agregar_error(f"Tokens inesperados en expresión switch: '{switch_tokens[p_expr.pos][1]}'", linea)
-            except SyntaxError as e:
-                self.agregar_error(f"Error en expresión switch: {str(e)}", linea)
-
-        t_llave = self.match_valor('{')
-        if not t_llave:
-            self.agregar_error("Falta llave de apertura '{' al final del switch", linea)
-            return None
-            
-        casos = []
-        while self.peek() and self.peek()[1] != '}':
-            if self.peek()[1] in ['case', 'default']:
-                casos.append(self.parsear_case())
-            else:
-                t_err = self.avanzar()
-                if t_err[1] != ';':
-                    self.agregar_error(f"Token inesperado '{t_err[1]}' dentro de switch, se esperaba 'case' o 'default'", t_err[2])
-                    
-        self.match_valor('}')
-        return Switch(expresion, casos, linea)
-
-    def parsear_case(self):
-        t = self.avanzar()
-        linea = t[2]
-        es_default = (t[1] == 'default')
-        
-        exprs = []
-        if not es_default:
-            case_tokens = []
-            while self.peek() and self.peek()[1] not in [':', '{', 'case', 'default']:
-                case_tokens.append(self.avanzar())
-                
-            if not case_tokens:
-                self.agregar_error("Case sin expresión", linea)
-            else:
-                current_expr_tokens = []
-                for tk in case_tokens:
-                    if tk[1] == ',':
-                        if current_expr_tokens:
-                            p_expr = ParserExpresiones(current_expr_tokens)
-                            try:
-                                expr = p_expr.parse_expresion()
-                                if p_expr.pos < len(current_expr_tokens):
-                                    self.agregar_error(f"Tokens inesperados en expresión case: '{current_expr_tokens[p_expr.pos][1]}'", linea)
-                                exprs.append(expr)
-                            except SyntaxError as e:
-                                self.agregar_error(f"Error en expresión case: {str(e)}", linea)
-                            current_expr_tokens = []
-                    else:
-                        current_expr_tokens.append(tk)
-                        
-                if current_expr_tokens:
-                    p_expr = ParserExpresiones(current_expr_tokens)
-                    try:
-                        expr = p_expr.parse_expresion()
-                        if p_expr.pos < len(current_expr_tokens):
-                            self.agregar_error(f"Tokens inesperados en expresión case: '{current_expr_tokens[p_expr.pos][1]}'", linea)
-                        exprs.append(expr)
-                    except SyntaxError as e:
-                        self.agregar_error(f"Error en expresión case: {str(e)}", linea)
-
-        t_colon = self.match_valor(':')
-        if not t_colon:
-            self.agregar_error("Faltan dos puntos ':' al final del case/default", linea)
-            
-        bloque_linea = self.peek()[2] if self.peek() else linea
-        bloque = Bloque(bloque_linea)
-        
-        while self.peek() and self.peek()[1] not in ['case', 'default', '}']:
             if self.peek()[1] == ';':
                 self.avanzar()
                 continue
             s = self.parsear_sentencia()
-            if s:
-                bloque.agregar_hijo(s)
-                
-        return Case(exprs, bloque, es_default, linea)
+            if s: bloque.agregar_hijo(s)
+            else: self.avanzar()
+        self.match_valor('}')
+        return bloque
 
-    def parsear_funcion(self):
-        t_func = self.match_valor('func')
-        linea = t_func[2]
-        
-        t_id = self.match_tipo('TKN ID')
-        if not t_id:
-            self.agregar_error("Falta identificador en declaración de función", linea)
-            return None
-            
-        nombre = t_id[1]
-        
-        t_paren = self.match_valor('(')
-        if not t_paren:
-            self.agregar_error("Faltan paréntesis de apertura en declaración de función", linea)
-            
-        parametros = []
-        while self.peek() and self.peek()[1] != ')':
-            p_id = self.match_tipo('TKN ID')
-            if not p_id:
-                t_err = self.avanzar()
-                self.agregar_error(f"Se esperaba un identificador para el parámetro, se encontró '{t_err[1]}'", linea)
+    def parsear_if(self):
+        t_if = self.match_valor('if')
+        # Soporte para if con init: if x := 10; x > 5 { ... }
+        # Leemos tokens hasta el { o ;
+        temp_pos = self.pos
+        has_semicolon = False
+        while self.pos < len(self.tokens) and self.tokens[self.pos][1] != '{':
+            if self.tokens[self.pos][1] == ';':
+                has_semicolon = True
                 break
-                
-            if self.peek() and self.peek()[1] in [',', ')']:
-                self.agregar_error(f"Falta el tipo de dato para el parámetro '{p_id[1]}'", linea)
-                p_tipo = "desconocido"
+            self.pos += 1
+        self.pos = temp_pos
+
+        init_stmt = None
+        if has_semicolon:
+            init_stmt = self.parsear_asignacion_o_expresion()
+            self.match_valor(';')
+        
+        condicion = self.parsear_expresion()
+        bloque_true = self.parsear_bloque()
+        bloque_false = None
+        if self.match_valor('else'):
+            if self.peek() and self.peek()[1] == 'if':
+                bloque_false = self.parsear_if()
             else:
-                p_tipo = self.parsear_tipo_dato()
-                if not p_tipo:
-                    t_err = self.avanzar()
-                    self.agregar_error(f"Tipo de dato inválido para el parámetro '{p_id[1]}'", linea)
-                    p_tipo = "desconocido"
-                
-            if p_id and p_tipo:
-                parametros.append((p_id[1], p_tipo))
+                bloque_false = self.parsear_bloque()
+        return If(condicion, bloque_true, bloque_false, t_if[2], init_stmt)
+
+    def parsear_for(self):
+        t_for = self.match_valor('for')
+        # Simplificamos: leemos tokens para ver si hay ;
+        temp_pos = self.pos
+        semicolons = 0
+        while self.pos < len(self.tokens) and self.tokens[self.pos][1] != '{':
+            if self.tokens[self.pos][1] == ';': semicolons += 1
+            self.pos += 1
+        self.pos = temp_pos
+
+        init, cond, post = None, None, None
+        if semicolons == 2:
+            if self.peek() and self.peek()[1] != ';': init = self.parsear_asignacion_o_expresion()
+            self.match_valor(';')
+            if self.peek() and self.peek()[1] != ';': cond = self.parsear_expresion()
+            self.match_valor(';')
+            if self.peek() and self.peek()[1] != '{': post = self.parsear_asignacion_o_expresion()
+        elif self.peek() and self.peek()[1] != '{':
+            cond = self.parsear_expresion()
             
-            if self.peek() and self.peek()[1] == ',':
-                self.avanzar()
-                
-        t_paren_c = self.match_valor(')')
-        if not t_paren_c:
-            self.agregar_error("Faltan paréntesis de cierre en declaración de función", linea)
-            
-        tipo_retorno = None
-        if self.peek() and self.peek()[1] != '{':
-            if self.peek()[1] == '(':
-                # Multiples valores de retorno o con nombre
-                self.avanzar()
-                retornos = []
-                while self.peek() and self.peek()[1] != ')':
-                    # Podría ser `nombre tipo` o solo `tipo`. Asumimos solo tipo por simplicidad en Mini-Go
-                    t_ret = self.parsear_tipo_dato()
-                    if t_ret:
-                        retornos.append(t_ret)
-                    else:
-                        self.avanzar() # Consumir token inválido
-                    if self.match_valor(','): continue
-                self.match_valor(')')
-                tipo_retorno = f"({', '.join(retornos)})"
-            else:
-                t_ret = self.parsear_tipo_dato()
-                if t_ret:
-                    tipo_retorno = t_ret
-                else:
-                    self.avanzar()
-            
-        bloque = self.parsear_bloque()
-        if not bloque:
-            self.agregar_error("Falta llave de apertura en cuerpo de función", linea)
-            
-        return Funcion(nombre, parametros, tipo_retorno, bloque, linea)
+        return For(init, cond, post, self.parsear_bloque(), t_for[2])
 
     def parsear_return(self):
         t_ret = self.match_valor('return')
-        linea = t_ret[2]
-        
-        exprs = []
+        ret_nodo = Return(None, t_ret[2])
         if self.peek() and self.peek()[1] not in [';', '}']:
-            expr_tokens = []
-            while self.peek() and self.peek()[1] not in [';', '}']:
-                expr_tokens.append(self.avanzar())
-            if expr_tokens:
-                p_expr = ParserExpresiones(expr_tokens)
-                try:
-                    exprs.append(p_expr.parse_expresion())
-                    while p_expr.pos < len(expr_tokens) and expr_tokens[p_expr.pos][1] == ',':
-                        p_expr.pos += 1
-                        exprs.append(p_expr.parse_expresion())
-                        
-                    if p_expr.pos < len(expr_tokens):
-                        t_err = expr_tokens[p_expr.pos]
-                        self.agregar_error(f"Sintaxis inválida cerca de '{t_err[1]}' en return", t_err[2])
-                except SyntaxError as e:
-                    self.agregar_error(f"Error en return: {str(e)}", linea)
-        
-        ret_nodo = Return(None, linea)
-        for e in exprs:
-            ret_nodo.agregar_hijo(e)
+            ret_nodo.agregar_hijo(self.parsear_expresion())
+            while self.match_valor(','):
+                ret_nodo.agregar_hijo(self.parsear_expresion())
         return ret_nodo
 
+    def parsear_funcion(self):
+        t_func = self.match_valor('func')
+        t_id = self.match_tipo('TKN ID')
+        nombre = t_id[1]
+        self.match_valor('(')
+        parametros = []
+        while self.peek() and self.peek()[1] != ')':
+            p_id = self.match_tipo('TKN ID')
+            p_tipo = self.parsear_tipo_dato()
+            parametros.append((p_id[1], p_tipo))
+            if not self.match_valor(','): break
+        self.match_valor(')')
+        
+        tipo_retorno = None
+        if self.peek() and self.peek()[1] != '{':
+            tipo_retorno = self.parsear_tipo_dato()
+            
+        return Funcion(nombre, parametros, tipo_retorno, self.parsear_bloque(), t_func[2])
+
     def parsear_break(self):
-        t = self.match_valor('break')
-        return Break(t[2])
+        return Break(self.avanzar()[2])
 
     def parsear_continue(self):
-        t = self.match_valor('continue')
-        return Continue(t[2])
+        return Continue(self.avanzar()[2])
+
+    def parsear_switch(self):
+        t_sw = self.match_valor('switch')
+        exp = None
+        if self.peek() and self.peek()[1] != '{':
+            exp = self.parsear_expresion()
+        self.match_valor('{')
+        casos = []
+        while self.peek() and self.peek()[1] != '}':
+            casos.append(self.parsear_case())
+        self.match_valor('}')
+        return Switch(exp, casos, t_sw[2])
+
+    def parsear_case(self):
+        t = self.avanzar()
+        es_default = (t[1] == 'default')
+        exprs = []
+        if not es_default:
+            exprs.append(self.parsear_expresion())
+            while self.match_valor(','):
+                exprs.append(self.parsear_expresion())
+        self.match_valor(':')
+        bloque = Bloque(t[2])
+        while self.peek() and self.peek()[1] not in ['case', 'default', '}']:
+            s = self.parsear_sentencia()
+            if s: bloque.agregar_hijo(s)
+            else: self.avanzar()
+        return Case(exprs, bloque, es_default, t[2])

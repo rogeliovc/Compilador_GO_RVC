@@ -25,6 +25,7 @@ class Simbolo:
         self.ambito = ambito
         self.scope_id = scope_id
         self.inicializada = False
+        self.usada = False
         self.parametros = []
         self.valor = None
     
