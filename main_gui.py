@@ -11,6 +11,7 @@ from parser import AnalizadorSintactico
 from semantic import AnalizadorSemanticoAST
 from symbol_table import TablaSimbolos
 from codegen import GeneradorIntermedio
+from asm_gen import GeneradorEnsamblador
 from errors import limpiar_errores, imprimir_errores, obtener_resumen_errores
 from utils import es_identificador_valido, es_tipo_dato, KEYWORDS_GO, TIPOS_BASICOS
 
@@ -767,6 +768,7 @@ class CodeEditor:
         compiler_menu.add_command(label="Análisis Sintáctico", accelerator="F7", command=self.generar_arbol_parseo)
         compiler_menu.add_command(label="Análisis Semántico", command=self.analizar_semantico)
         compiler_menu.add_command(label="Código Intermedio (TAC)", command=self.generar_tac)
+        compiler_menu.add_command(label="Código Ensamblador (x86_64)", command=self.generar_asm)
         
         # 5. Menú Variables
         var_menu = tk.Menu(menubar, tearoff=0, **menu_options)
@@ -1107,6 +1109,27 @@ class CodeEditor:
         self.results_text.insert(tk.END, "=== CÓDIGO INTERMEDIO (TAC) ===\n\n")
         self.codegen.generar(arbol)
         self.results_text.insert(tk.END, self.codegen.obtener_codigo())
+
+    def generar_asm(self):
+        codigo = self.text_area.get(1.0, tk.END).strip()
+        if not codigo: return
+        
+        tokens = self.lexer.procesar(codigo)
+        arbol = self.parser.parsear_programa(tokens)
+        self.semantic = AnalizadorSemanticoAST()
+        self.semantic.procesar(arbol)
+        
+        # Generar TAC primero
+        instrucciones_tac = self.codegen.generar(arbol)
+        
+        # Traducir a Ensamblador (pasamos la tabla de símbolos para detectar tamaños de arreglos)
+        asm_gen = GeneradorEnsamblador(instrucciones_tac, self.semantic.tabla_simbolos)
+        codigo_asm = asm_gen.generar()
+        
+        self.results_text.delete(1.0, tk.END)
+        self.results_text.insert(tk.END, "=== CÓDIGO ENSAMBLADOR (x86_64 / NASM) ===\n\n")
+        self.results_text.insert(tk.END, codigo_asm)
+        self.status_label.config(text="Código ensamblador generado")
 
     def analizar_semantico(self):
         self.limpiar_resultados()

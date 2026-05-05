@@ -64,6 +64,11 @@ class GeneradorIntermedio:
         self.label_count = 0
         self.pila_etiquetas_for = []
         self.visit(nodo_raiz)
+        
+        # --- NUEVO: Aplicar optimizaciones ---
+        optimizador = OptimizadorTAC(self.instrucciones)
+        self.instrucciones = optimizador.optimizar()
+        
         return self.instrucciones
 
     def visit(self, nodo):
@@ -194,17 +199,11 @@ class GeneradorIntermedio:
         self.emitir('RETURN', valor)
 
     def visit_LlamadaFuncion(self, nodo):
-        # 1. Generar código para los argumentos
         args_temporales = []
-        # En LlamadaFuncion: hijo 0 es la expr_func, hijos 1+ son los argumentos
         for arg in nodo.hijos[1:]:
             args_temporales.append(self.visit(arg))
-            
-        # 2. Emitir PARAM para cada argumento (estándar TAC)
         for temp in args_temporales:
             self.emitir('PARAM', temp)
-            
-        # 3. Obtener el nombre de la función
         func_expr = nodo.hijos[0]
         nombre_func = "unknown"
         if isinstance(func_expr, Variable):
@@ -213,19 +212,15 @@ class GeneradorIntermedio:
             nombre_func = f"{self.visit(func_expr.hijos[0])}.{func_expr.valor}"
         else:
             nombre_func = self.visit(func_expr)
-             
-        # 4. Emitir CALL (res = call func, num_params)
         res = self.nuevo_temporal()
         self.emitir('CALL', nombre_func, len(args_temporales), res)
         return res
 
     def visit_AttributeAccess(self, nodo):
-        # Simplificación para TAC: devolver nombre compuesto (ej: fmt.Println)
         base = self.visit(nodo.hijos[0])
         return f"{base}.{nodo.valor}"
 
     def visit_ArrayAccess(self, nodo):
-        # Lectura de arreglo: res = arr[i]
         base = self.visit(nodo.hijos[0])
         idx = self.visit(nodo.hijos[1])
         res = self.nuevo_temporal()
@@ -235,59 +230,102 @@ class GeneradorIntermedio:
     def visit_Funcion(self, nodo):
         nombre = nodo.valor
         self.emitir('LABEL', None, None, f"FUNC_START_{nombre}")
-        
-        # Procesar parámetros (solo como referencia en el TAC)
         for p_nombre, p_tipo in (nodo.parametros or []):
             self.emitir('RECEIVE_PARAM', p_nombre)
-            
-        # Visitar el cuerpo (bloque)
         if nodo.hijos:
             self.visit(nodo.hijos[0])
-            
         self.emitir('LABEL', None, None, f"FUNC_END_{nombre}")
         return None
 
     def visit_Switch(self, nodo):
         l_end = self.nueva_etiqueta()
         val_sw = self.visit(nodo.hijos[0]) if nodo.hijos[0] else None
-        
-        # Guardamos la etiqueta de salida en una propiedad temporal para los 'Case'
         old_switch_end = getattr(self, '_current_switch_end', None)
         self._current_switch_end = l_end
-        
-        # Procesamos los casos (están en hijos[1:])
         for caso in nodo.hijos[1:]:
-            # Pasamos el valor del switch al caso para que genere la comparación
             caso._switch_val = val_sw
             self.visit(caso)
-            
         self.emitir('LABEL', None, None, l_end)
         self._current_switch_end = old_switch_end
 
     def visit_Case(self, nodo):
         l_next = self.nueva_etiqueta()
-        
         if not nodo.es_default:
-            # En Go un case puede tener múltiples expresiones: case 1, 2, 3:
-            # nodo.hijos[:-1] son las expresiones, nodo.hijos[-1] es el bloque
             for expr_nodo in nodo.hijos[:-1]:
                 val_case = self.visit(expr_nodo)
                 t_cmp = self.nuevo_temporal()
-                # Si el switch tiene valor, comparamos. Si no (switch {}), el case debe ser bool.
                 if hasattr(nodo, '_switch_val') and nodo._switch_val:
                     self.emitir('==', nodo._switch_val, val_case, t_cmp)
-                    self.emitir('IF', t_cmp, None, l_next) # Si coincide, vamos al bloque (simulado)
+                    self.emitir('IF', t_cmp, None, l_next)
                 else:
                     self.emitir('IFNOT', val_case, None, l_next)
-            
-            # Nota: Esta es una implementación simplificada de switch.
-            # Para mayor fidelidad, se usaría una estructura de saltos más compleja.
-            self.visit(nodo.hijos[-1]) # Bloque del case
+            self.visit(nodo.hijos[-1])
             self.emitir('GOTO', None, None, self._current_switch_end)
             self.emitir('LABEL', None, None, l_next)
         else:
-            # Default case
             self.visit(nodo.hijos[-1])
 
     def obtener_codigo(self):
         return "\n".join(str(ins) for ins in self.instrucciones)
+
+class OptimizadorTAC:
+    def __init__(self, instrucciones):
+        self.instrucciones = instrucciones
+
+    def optimizar(self):
+        # Realizamos varias pasadas hasta que ya no haya cambios (o un número fijo)
+        for _ in range(3):
+            self.instrucciones = self.plegado_constantes(self.instrucciones)
+            self.instrucciones = self.eliminar_saltos_inutiles(self.instrucciones)
+            self.instrucciones = self.eliminar_etiquetas_huerfanas(self.instrucciones)
+        return self.instrucciones
+
+    def es_numero(self, val):
+        try:
+            float(val)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    def plegado_constantes(self, insts):
+        optimizadas = []
+        for ins in insts:
+            if ins.op in ['+', '-', '*', '/', '%'] and self.es_numero(ins.arg1) and self.es_numero(ins.arg2):
+                try:
+                    v1, v2 = float(ins.arg1), float(ins.arg2)
+                    res_val = 0
+                    if ins.op == '+': res_val = v1 + v2
+                    elif ins.op == '-': res_val = v1 - v2
+                    elif ins.op == '*': res_val = v1 * v2
+                    elif ins.op == '/': res_val = v1 / v2 if v2 != 0 else 0
+                    elif ins.op == '%': res_val = v1 % v2
+                    
+                    str_res = str(int(res_val)) if res_val.is_integer() else str(res_val)
+                    optimizadas.append(InstruccionTAC('=', str_res, None, ins.res))
+                    continue
+                except ZeroDivisionError: pass
+            optimizadas.append(ins)
+        return optimizadas
+
+    def eliminar_saltos_inutiles(self, insts):
+        optimizadas = []
+        for i in range(len(insts)):
+            ins = insts[i]
+            if ins.op == 'GOTO' and i + 1 < len(insts):
+                sig = insts[i+1]
+                if sig.op == 'LABEL' and sig.res == ins.res:
+                    continue
+            optimizadas.append(ins)
+        return optimizadas
+
+    def eliminar_etiquetas_huerfanas(self, insts):
+        usadas = set()
+        for ins in insts:
+            if ins.op in ['GOTO', 'IF', 'IFNOT']: usadas.add(ins.res)
+        
+        optimizadas = []
+        for ins in insts:
+            if ins.op == 'LABEL' and ins.res not in usadas:
+                if not str(ins.res).startswith("FUNC_"): continue
+            optimizadas.append(ins)
+        return optimizadas
