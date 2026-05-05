@@ -50,8 +50,22 @@ class AnalizadorSemanticoAST(ASTVisitor):
                         self.agregar_error(f"Variable '{s.nombre}' declarada pero no usada", s.linea)
 
     def visit_Programa(self, nodo):
-        for hijo in nodo.hijos: self.visit(hijo)
+        for hijo in nodo.hijos:
+            self.verificar_sentencia_util(hijo)
+            self.visit(hijo)
         return "void"
+
+    def verificar_sentencia_util(self, nodo):
+        if nodo is None: return
+        
+        # Nodos que son puras expresiones y no deberían estar solos como sentencias
+        nodos_invalidos = (
+            Variable, Numero, StringLiteral, BooleanLiteral,
+            OperacionBinaria, OperacionUnaria, ArrayAccess, AttributeAccess
+        )
+        
+        if isinstance(nodo, nodos_invalidos):
+            self.agregar_error(f"Expresión evaluada pero no usada", nodo.linea)
 
     def visit_Package(self, nodo): return "void"
 
@@ -64,18 +78,37 @@ class AnalizadorSemanticoAST(ASTVisitor):
         return "void"
 
     def visit_DeclaracionVariable(self, nodo):
-        nombres = getattr(nodo, 'multiples_valores', [nodo.valor])
+        nombres = getattr(nodo, 'nombres', [nodo.valor])
+        expresiones = getattr(nodo, 'expresiones', nodo.hijos if nodo.hijos else [])
         tipo_declarado = nodo.tipo_dato
-        tipo_der = self.visit(nodo.hijos[0]) if nodo.hijos and nodo.hijos[0] else None
         
-        for nombre in nombres:
-            tipo_final = tipo_declarado if tipo_declarado != "inferido" else (tipo_der or "int")
+        for i, nombre in enumerate(nombres):
+            # Obtener tipo de la expresión correspondiente si existe
+            tipo_exp = None
+            if i < len(expresiones):
+                tipo_exp = self.visit(expresiones[i])
+            
+            tipo_final = tipo_declarado if (tipo_declarado and tipo_declarado != "inferido") else (tipo_exp or "int")
+            
             if not self.tabla_simbolos.existe_en_ambito_actual(nombre):
                 self.tabla_simbolos.agregar_variable(nombre, tipo_final, nodo.linea)
+            else:
+                self.agregar_error(f"Variable '{nombre}' ya declarada en este ámbito", nodo.linea)
         return "void"
 
     def visit_Asignacion(self, nodo):
-        for h in nodo.hijos: self.visit(h)
+        izquierdos = getattr(nodo, 'izquierdos', [nodo.hijos[0]])
+        derechos = getattr(nodo, 'derechos', [nodo.hijos[1]])
+        
+        for izq in izquierdos:
+            tipo_izq = self.visit(izq)
+            if isinstance(izq, Variable):
+                simbolo = self.tabla_simbolos.buscar_simbolo(izq.valor)
+                if simbolo: simbolo.usada = True
+                
+        for der in derechos:
+            self.visit(der)
+            
         return "void"
 
     def visit_Variable(self, nodo):
@@ -120,6 +153,7 @@ class AnalizadorSemanticoAST(ASTVisitor):
     def visit_Bloque(self, nodo):
         self.tabla_simbolos.entrar_ambito(Ambito.LOCAL)
         for hijo in nodo.hijos:
+            self.verificar_sentencia_util(hijo)
             self.visit(hijo)
         self.tabla_simbolos.salir_ambito()
         return "void"

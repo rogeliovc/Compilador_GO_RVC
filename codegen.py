@@ -42,6 +42,7 @@ class GeneradorIntermedio:
         self.temp_count = 0
         self.label_count = 0
         self.pila_etiquetas_for = [] # [(etiqueta_inicio, etiqueta_fin), ...]
+        self._current_switch_end = None
 
     def nuevo_temporal(self):
         t = f"t{self.temp_count}"
@@ -111,18 +112,18 @@ class GeneradorIntermedio:
         for hijo in nodo.hijos: self.visit(hijo)
 
     def visit_DeclaracionVariable(self, nodo):
-        nombres = getattr(nodo, 'multiples_valores', [nodo.valor])
-        derechos = getattr(nodo, 'multiples_derechos', [nodo.hijos[0]] if nodo.hijos else [])
+        nombres = getattr(nodo, 'nombres', [nodo.valor])
+        expresiones = getattr(nodo, 'expresiones', nodo.hijos if nodo.hijos else [])
         
         for i, nombre in enumerate(nombres):
-            if i < len(derechos):
-                valor = self.visit(derechos[i])
+            if i < len(expresiones):
+                valor = self.visit(expresiones[i])
                 self.emitir('=', valor, None, nombre)
         return None
 
     def visit_Asignacion(self, nodo):
-        izquierdos = getattr(nodo, 'multiples_izquierdos', [nodo.hijos[0]])
-        derechos = getattr(nodo, 'multiples_derechos', [nodo.hijos[1]])
+        izquierdos = getattr(nodo, 'izquierdos', [nodo.hijos[0]])
+        derechos = getattr(nodo, 'derechos', [nodo.hijos[1]])
         
         for i in range(min(len(izquierdos), len(derechos))):
             valor_der = self.visit(derechos[i])
@@ -260,7 +261,8 @@ class GeneradorIntermedio:
                 else:
                     self.emitir('IFNOT', val_case, None, l_next)
             self.visit(nodo.hijos[-1])
-            self.emitir('GOTO', None, None, self._current_switch_end)
+            if self._current_switch_end:
+                self.emitir('GOTO', None, None, self._current_switch_end)
             self.emitir('LABEL', None, None, l_next)
         else:
             self.visit(nodo.hijos[-1])

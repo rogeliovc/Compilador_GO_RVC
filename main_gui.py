@@ -23,7 +23,7 @@ class CodeEditor:
         self._recent_resize = False
         self._resize_time = 0
         self.root = root
-        self.root.title("Compilador Mini-Go - Sistema de Errores")
+        self.root.title("Compilador - Go")
         self.root.geometry("1000x700")
         self.current_file = None
 
@@ -133,8 +133,8 @@ class CodeEditor:
         self.text_area.bind('<MouseWheel>', self.on_mousewheel)
         self.text_area.bind('<Return>', self.on_enter_key)
         
-        self.text_area.bind('<Button-1>', lambda e: self.root.after(10, self.highlight_current_line))
-        self.text_area.bind('<B1-Motion>', lambda e: self.root.after(10, self.highlight_current_line))
+        self.text_area.bind('<Button-1>', lambda e: self.root.after(10, self.status_and_highlight))
+        self.text_area.bind('<B1-Motion>', lambda e: self.root.after(10, self.status_and_highlight))
         self.text_area.bind('<Key>', self.on_key_press)
         self.text_area.bind('<Alt-Up>', self.move_line_up)
         self.text_area.bind('<Alt-Down>', self.move_line_down)
@@ -150,7 +150,11 @@ class CodeEditor:
         
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.after(100, self.load_config)
-        
+
+    def status_and_highlight(self, event=None):
+        self.highlight_current_line()
+        self.update_status()
+
     def load_config(self):
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ide_config.json')
         if os.path.exists(config_path):
@@ -706,14 +710,48 @@ class CodeEditor:
         # Esta función ha sido descartada para evitar carga de CPU excesiva y desincronización
         pass
     
-    def update_status(self):
+    def update_status(self, event=None):
+        cursor_pos = self.text_area.index(tk.INSERT)
+        line, col = cursor_pos.split('.')
+
         texto_editor = str(self.text_area.get(1.0, tk.END))
-        
         char_count = len(texto_editor) - 1
         line_count = texto_editor.count('\n')
-        status_text = f"Caracteres: {char_count} | Líneas: {line_count}"
+
+        status_text = f" Caracteres: {char_count} | Líneas: {line_count} | Ln: {line}, Col: {col}"
         self.status_label.config(text=status_text)
-    
+
+    def select_all(self, event=None):
+        self.text_area.tag_add(tk.SEL, "1.0", tk.END)
+        self.text_area.mark_set(tk.INSERT, "1.0")
+        self.text_area.see(tk.INSERT)
+        self.update_status()
+        return 'break'
+
+    def go_to_line(self, event=None):
+        line_num = simpledialog.askinteger("Ir a la Línea", "Número de línea:", parent=self.root)
+        if line_num:
+            self.text_area.mark_set(tk.INSERT, f"{line_num}.0")
+            self.text_area.see(tk.INSERT)
+            self.highlight_current_line()
+            self.update_status()
+
+    def find_text(self, event=None):
+        target = simpledialog.askstring("Buscar", "Texto a buscar:", parent=self.root)
+        if target:
+            idx = self.text_area.search(target, tk.INSERT, stopindex=tk.END)
+            if not idx:
+                idx = self.text_area.search(target, "1.0", stopindex=tk.END)
+            if idx:
+                lastidx = f"{idx}+{len(target)}c"
+                self.text_area.tag_remove(tk.SEL, "1.0", tk.END)
+                self.text_area.tag_add(tk.SEL, idx, lastidx)
+                self.text_area.mark_set(tk.INSERT, lastidx)
+                self.text_area.see(idx)
+                self.update_status()
+            else:
+                messagebox.showinfo("Buscar", f"No se encontró '{target}'")
+
     def update_file_info(self):
         if self.current_file:
             filename = os.path.basename(self.current_file)
@@ -723,6 +761,34 @@ class CodeEditor:
             file_info = "Sin guardar"
         self.file_info_label.config(text=file_info)
     
+    def insert_text(self, text):
+        # Si el texto contiene $0, posicionar el cursor ahí y eliminar el marcador
+        if "$0" in text:
+            parts = text.split("$0", 1)
+            self.text_area.insert(tk.INSERT, parts[0])
+            cursor_mark = self.text_area.index(tk.INSERT)
+            self.text_area.insert(tk.INSERT, parts[1])
+            self.text_area.mark_set(tk.INSERT, cursor_mark)
+        else:
+            self.text_area.insert(tk.INSERT, text)
+            
+        self.highlight_syntax()
+        self.update_line_numbers()
+        self.update_status()
+        self.highlight_current_line()
+        self.text_area.focus_set()
+
+    def change_font_size(self, delta):
+        # Obtener fuente actual
+        current_font = font.Font(font=self.text_area['font'])
+        size = current_font.actual()['size']
+        new_size = size + delta
+        if 8 <= new_size <= 30:
+            new_font = (current_font.actual()['family'], new_size)
+            self.text_area.configure(font=new_font)
+            self.line_numbers.configure(font=new_font)
+            self.update_line_numbers()
+
     def setup_menu(self):
         # Opciones comunes para los menús para evitar transparencias en Linux/Arch
         menu_options = {
@@ -754,14 +820,26 @@ class CodeEditor:
         edit_menu.add_command(label="Cortar", accelerator="Ctrl+X", command=lambda: self.text_area.event_generate("<<Cut>>"))
         edit_menu.add_command(label="Copiar", accelerator="Ctrl+C", command=lambda: self.text_area.event_generate("<<Copy>>"))
         edit_menu.add_command(label="Pegar", accelerator="Ctrl+V", command=lambda: self.text_area.event_generate("<<Paste>>"))
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Buscar", accelerator="Ctrl+F", command=self.find_text)
+        edit_menu.add_command(label="Ir a la Línea", accelerator="Ctrl+G", command=self.go_to_line)
+        edit_menu.add_command(label="Seleccionar Todo", accelerator="Ctrl+A", command=self.select_all)
         
-        # 3. Menú Ejecutar
+        # 3. Menú Ver (Nuevo)
+        view_menu = tk.Menu(menubar, tearoff=0, **menu_options)
+        menubar.add_cascade(label="Ver", menu=view_menu)
+        view_menu.add_command(label="Aumentar Fuente", accelerator="Ctrl++", command=lambda: self.change_font_size(1))
+        view_menu.add_command(label="Disminuir Fuente", accelerator="Ctrl+-", command=lambda: self.change_font_size(-1))
+        view_menu.add_separator()
+        view_menu.add_command(label="Alternar Consola", command=self.toggle_console)
+
+        # 4. Menú Ejecutar
         run_menu = tk.Menu(menubar, tearoff=0, **menu_options)
         menubar.add_cascade(label="Ejecutar", menu=run_menu)
         run_menu.add_command(label="Compilar Pipeline Completo", accelerator="F9", command=self.compilar_codigo)
         run_menu.add_command(label="Limpiar Resultados", command=self.limpiar_resultados)
         
-        # 4. Menú Compiladores
+        # 5. Menú Compiladores
         compiler_menu = tk.Menu(menubar, tearoff=0, **menu_options)
         menubar.add_cascade(label="Compiladores", menu=compiler_menu)
         compiler_menu.add_command(label="Análisis Léxico", accelerator="F5", command=self.analizar_lexico)
@@ -769,24 +847,76 @@ class CodeEditor:
         compiler_menu.add_command(label="Análisis Semántico", command=self.analizar_semantico)
         compiler_menu.add_command(label="Código Intermedio (TAC)", command=self.generar_tac)
         compiler_menu.add_command(label="Código Ensamblador (x86_64)", command=self.generar_asm)
-        
-        # 5. Menú Variables
-        var_menu = tk.Menu(menubar, tearoff=0, **menu_options)
-        menubar.add_cascade(label="Variables", menu=var_menu)
-        var_menu.add_command(label="Ver Tabla de Símbolos", accelerator="F10", command=self.mostrar_tabla_simbolos)
-        
+
         # 6. Menú Ayuda
         help_menu = tk.Menu(menubar, tearoff=0, **menu_options)
         menubar.add_cascade(label="Ayuda", menu=help_menu)
         help_menu.add_command(label="Ayuda", command=self.show_help)
         help_menu.add_command(label="Acerca de...", command=self.show_about)
+        help_menu.add_separator()        
+        # Submenú Acceso a Librerías
+        lib_menu = tk.Menu(help_menu, tearoff=0, **menu_options)
+        help_menu.add_cascade(label="Acceso a Librerías", menu=lib_menu)
+        lib_menu.add_command(label="fmt", command=lambda: self.insert_text('import "fmt"\n$0'))
+        lib_menu.add_command(label="math", command=lambda: self.insert_text('import "math"\n$0'))
+        lib_menu.add_command(label="os", command=lambda: self.insert_text('import "os"\n$0'))
+        lib_menu.add_command(label="time", command=lambda: self.insert_text('import "time"\n$0'))
+        lib_menu.add_command(label="net/http", command=lambda: self.insert_text('import "net/http"\n$0'))
         
+        # Submenú Acceso a Variables
+        vars_snippet_menu = tk.Menu(help_menu, tearoff=0, **menu_options)
+        help_menu.add_cascade(label="Acceso a Variables", menu=vars_snippet_menu)
+        vars_snippet_menu.add_command(label="Declaración Estándar", command=lambda: self.insert_text('var $0 int\n'))
+        vars_snippet_menu.add_command(label="Declaración con Inicialización", command=lambda: self.insert_text('var $0 int = 0\n'))
+        vars_snippet_menu.add_command(label="Declaración Corta", command=lambda: self.insert_text('$0 := 0\n'))
+        vars_snippet_menu.add_command(label="Declaración Múltiple", command=lambda: self.insert_text('var a, b, c int = $0, 0, 0\n'))
+        vars_snippet_menu.add_command(label="Constante", command=lambda: self.insert_text('const $0 = 0\n'))
+
+        # Submenú Acceso a Estructuras
+        struct_menu = tk.Menu(help_menu, tearoff=0, **menu_options)
+        help_menu.add_cascade(label="Acceso a Estructuras", menu=struct_menu)
+        struct_menu.add_command(label="If", command=lambda: self.insert_text('if $0 {\n    \n}\n'))
+        struct_menu.add_command(label="If-Else", command=lambda: self.insert_text('if $0 {\n    \n} else {\n    \n}\n'))
+        struct_menu.add_command(label="For", command=lambda: self.insert_text('for i := 0; i < $0; i++ {\n    \n}\n'))
+        struct_menu.add_command(label="Switch", command=lambda: self.insert_text('switch $0 {\ncase 1:\n    \ndefault:\n    \n}\n'))
+        
+        # Submenú Acceso a Funciones
+        func_snippet_menu = tk.Menu(help_menu, tearoff=0, **menu_options)
+        help_menu.add_cascade(label="Acceso a Funciones", menu=func_snippet_menu)
+        func_snippet_menu.add_command(label="Función Principal (main)", command=lambda: self.insert_text('func main() {\n    $0\n}\n'))
+        func_snippet_menu.add_command(label="Función Simple", command=lambda: self.insert_text('func $0() {\n    \n}\n'))
+        func_snippet_menu.add_command(label="Función con Parámetros", command=lambda: self.insert_text('func $0(a int, b int) {\n    \n}\n'))
+        func_snippet_menu.add_command(label="Función con Retorno", command=lambda: self.insert_text('func $0() int {\n    return 0\n}\n'))
+
+        # Submenú Acceso a Tipos de Datos
+        types_snippet_menu = tk.Menu(help_menu, tearoff=0, **menu_options)
+        help_menu.add_cascade(label="Acceso a Tipos de Datos", menu=types_snippet_menu)
+        types_snippet_menu.add_command(label="Entero (int)", command=lambda: self.insert_text('int$0'))
+        types_snippet_menu.add_command(label="Cadena (string)", command=lambda: self.insert_text('string$0'))
+        types_snippet_menu.add_command(label="Booleano (bool)", command=lambda: self.insert_text('bool$0'))
+        types_snippet_menu.add_command(label="Flotante (float64)", command=lambda: self.insert_text('float64$0'))
+        types_snippet_menu.add_separator()
+        types_snippet_menu.add_command(label="Arreglo (Array)", command=lambda: self.insert_text('[$0]int'))
+        types_snippet_menu.add_command(label="Slice", command=lambda: self.insert_text('[]$0'))
+        types_snippet_menu.add_command(label="Mapa (Map)", command=lambda: self.insert_text('map[$0]int'))
+
+        # Submenú Acceso a Estructuras Avanzadas
+        adv_struct_menu = tk.Menu(help_menu, tearoff=0, **menu_options)
+        help_menu.add_cascade(label="Acceso a Estructuras Avanzadas", menu=adv_struct_menu)
+        adv_struct_menu.add_command(label="Definir Struct", command=lambda: self.insert_text('type $0 struct {\n    Campo int\n}\n'))
+        adv_struct_menu.add_command(label="Definir Interface", command=lambda: self.insert_text('type $0 interface {\n    Metodo()\n}\n'))
+        adv_struct_menu.add_command(label="Definir Map (make)", command=lambda: self.insert_text('make(map[string]$0)'))
+
         self.setup_shortcuts()
+        self.root.bind_all('<Control-plus>', lambda e: self.change_font_size(1))
+        self.root.bind_all('<Control-minus>', lambda e: self.change_font_size(-1))
+        self.root.bind_all('<Control-equal>', lambda e: self.change_font_size(1)) # Para teclados con + en Shift
+
     
     def new_file(self):
         self.text_area.delete(1.0, tk.END)
         self.current_file = None
-        self.root.title("Nuevo archivo - Compilador Mini-Go")
+        self.root.title("Nuevo archivo - Compilador Go")
         
         self.semantic = AnalizadorSemanticoAST()
         limpiar_errores()
@@ -801,7 +931,7 @@ class CodeEditor:
                 self.text_area.delete(1.0, tk.END)
                 self.text_area.insert(1.0, file.read())
             self.current_file = file_path
-            self.root.title(f"{file_path} - Compilador Mini-Go")
+            self.root.title(f"{file_path} - Compilador Go")
             self.highlight_syntax()
             
             self.semantic = AnalizadorSemanticoAST()
@@ -843,7 +973,7 @@ class CodeEditor:
                 with open(file_path, 'w', encoding='utf-8') as file:
                     file.write(self.text_area.get(1.0, tk.END))
                 self.current_file = file_path
-                self.root.title(f"{file_path} - Compilador Mini-Go")
+                self.root.title(f"{file_path} - Compilador Go")
                 messagebox.showinfo("Guardado", f"Archivo guardado: {file_path}")
                 self.update_file_info()
                 self.status_label.config(text=f"Archivo guardado: {os.path.basename(file_path)}")
@@ -864,14 +994,23 @@ class CodeEditor:
         self.parser = AnalizadorSintactico()
         
         self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(tk.END, "Iniciando compilación (AST-Based Mini-Go Compiler)\n")
+        self.results_text.insert(tk.END, "Iniciando compilación (AST-Based Go Compiler)\n")
         self.results_text.insert(tk.END, "-" * 60 + "\n\n")
         
         # 1. Análisis léxico
         self.results_text.insert(tk.END, "[Fase 1] Análisis Léxico (Tokenizado)\n")
         tokens_totales = self.lexer.procesar(codigo)
         
-        self.results_text.insert(tk.END, f"  > Total de tokens identificados: {len(tokens_totales)}\n")
+        resumen_inicial = obtener_resumen_errores()
+        errores_lexicos = resumen_inicial['detalle_sintacticos'].get('lexicos', 0)
+        
+        if errores_lexicos > 0:
+            self.results_text.insert(tk.END, f"  > Status: (ERROR) Se detectaron {errores_lexicos} errores léxicos:\n")
+            from errors import error_manager
+            for err in error_manager.obtener_errores_sintacticos('lexicos'):
+                self.results_text.insert(tk.END, f"    - Línea {err['linea']}: {err['mensaje']}\n")
+        else:
+            self.results_text.insert(tk.END, f"  > Total de tokens identificados: {len(tokens_totales)}\n")
         
         # 2. Análisis sintáctico estructural
         self.results_text.insert(tk.END, "\n[Fase 2] Análisis Sintáctico (Parser AST)\n")
@@ -900,12 +1039,20 @@ class CodeEditor:
              
              # 4. Generación de Código Intermedio (TAC)
              self.results_text.insert(tk.END, "\n[Fase 4] Generación de Código Intermedio (TAC)\n")
-             self.codegen.generar(arbol)
+             instrucciones_tac = self.codegen.generar(arbol)
              self.results_text.insert(tk.END, "  > Status: TAC generado con éxito.\n")
              self.results_text.insert(tk.END, "\n--- CÓDIGO INTERMEDIO ---\n")
              self.results_text.insert(tk.END, self.codegen.obtener_codigo() + "\n")
+
+             # 5. Generación de Código Ensamblador (x86_64)
+             self.results_text.insert(tk.END, "\n[Fase 5] Generación de Código Ensamblador (x86_64)\n")
+             asm_gen = GeneradorEnsamblador(instrucciones_tac, self.semantic.tabla_simbolos)
+             codigo_asm = asm_gen.generar()
+             self.results_text.insert(tk.END, "  > Status: Ensamblador generado con éxito.\n")
+             self.results_text.insert(tk.END, "\n--- CÓDIGO ENSAMBLADOR ---\n")
+             self.results_text.insert(tk.END, codigo_asm + "\n")
         
-        # 4. Resumen
+        # Resumen final (antes era 4, ahora es 6)
         self.results_text.insert(tk.END, f"\n[Tabla de Símbolos]\n")
         
         class Resumen:
@@ -956,14 +1103,27 @@ class CodeEditor:
             self.results_text.insert(tk.END, "No hay código para analizar.\n")
             return
         
+        limpiar_errores()
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, "=== ANÁLISIS LÉXICO ===\n\n")
         
         tokens = self.lexer.procesar(codigo)
+        
+        from errors import error_manager
+        lex_errors = error_manager.obtener_errores_sintacticos('lexicos')
+        if lex_errors:
+            self.results_text.insert(tk.END, f"ERRORES ENCONTRADOS ({len(lex_errors)}):\n")
+            for err in lex_errors:
+                self.results_text.insert(tk.END, f"  [!] Línea {err['linea']}: {err['mensaje']}\n")
+            self.results_text.insert(tk.END, "\nTOKENS PARCIALES:\n")
+
         for tipo, valor, linea in tokens:
             self.results_text.insert(tk.END, f"<{tipo}, '{valor}'>\n")
         
-        self.status_label.config(text="Análisis léxico completado")
+        if lex_errors:
+            self.status_label.config(text=f"Análisis completado con {len(lex_errors)} errores")
+        else:
+            self.status_label.config(text="Análisis léxico completado")
     
 
     def generar_arbol_parseo(self):
@@ -1064,6 +1224,9 @@ class CodeEditor:
         self.root.bind_all('<Control-n>', lambda e: self.new_file())
         self.root.bind_all('<Control-o>', lambda e: self.open_file())
         self.root.bind_all('<Control-s>', lambda e: self.save_file())
+        self.root.bind_all('<Control-f>', lambda e: self.find_text())
+        self.root.bind_all('<Control-g>', lambda e: self.go_to_line())
+        self.root.bind_all('<Control-a>', lambda e: self.select_all())
         self.root.bind_all('<F5>', lambda e: self.analizar_lexico())
         self.root.bind_all('<F7>', lambda e: self.generar_arbol_parseo())
         self.root.bind_all('<F9>', lambda e: self.compilar_codigo())
@@ -1074,7 +1237,7 @@ class CodeEditor:
     
     def show_help(self):
         messagebox.showinfo("Ayuda", 
-            "Editor de código para Mini-Go con Sistema de Errores Integrado\n\n"
+            "Editor de código Go\n\n"
             "Atajos de teclado:\n"
             "F5: Análisis Léxico\n"
             "F7: Generar Árbol de Parseo\n"
@@ -1095,7 +1258,7 @@ class CodeEditor:
             "• Integración completa con el compilador")
     
     def show_about(self):
-        messagebox.showinfo("Acerca de", "IDE de Compilación v2.0 - Mini-Go\nSistema de Errores Integrado\nArquitectura modular implementada.")
+        messagebox.showinfo("Acerca de", "IDE de Compilación - Go\nSistema de Errores Integrado\nArquitectura modular implementada.")
 
     def generar_tac(self):
         codigo = self.text_area.get(1.0, tk.END).strip()

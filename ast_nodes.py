@@ -76,12 +76,16 @@ class DeclaracionVariable(NodoAST):
         super().__init__("DeclaracionVar", nombre, linea)
         self.tipo_dato = tipo_dato
         self.agregar_hijo(expresion_valor)
+        self.nombres = [nombre] if nombre else []
+        self.expresiones = [expresion_valor] if expresion_valor else []
 
 class Asignacion(NodoAST):
     def __init__(self, identificador, expresion, linea=0):
         super().__init__("Asignacion", "=", linea)
         self.agregar_hijo(identificador)
         self.agregar_hijo(expresion)
+        self.izquierdos = [identificador] if identificador else []
+        self.derechos = [expresion] if expresion else []
 
 class If(NodoAST):
     def __init__(self, condicion, bloque_true, bloque_false=None, linea=0, init_stmt=None):
